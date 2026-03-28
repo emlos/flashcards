@@ -46,7 +46,10 @@ let selectedStudyCollectionIds = new Set(
 );
 const selectedFlashcardIds = new Set();
 const MAX_IMPORT_ISSUES_TO_DISPLAY = 3;
+const SEARCH_INPUT_DEBOUNCE_MS = 120;
 let persistQueue = Promise.resolve(false);
+let flashcardRenderDebounceId = 0;
+let collectionEditorRenderDebounceId = 0;
 
 const elements = {
     appStatusMessage: document.getElementById("app-status-message"),
@@ -202,6 +205,30 @@ function switchTab(tabName) {
     updateUiPrefs({ activeTab: nextTab });
 }
 
+function debounceRender(timeoutId, callback) {
+    if (timeoutId) {
+        window.clearTimeout(timeoutId);
+    }
+
+    return window.setTimeout(() => {
+        callback();
+    }, SEARCH_INPUT_DEBOUNCE_MS);
+}
+
+function scheduleFlashcardRender() {
+    flashcardRenderDebounceId = debounceRender(flashcardRenderDebounceId, () => {
+        flashcardRenderDebounceId = 0;
+        renderFlashcards();
+    });
+}
+
+function scheduleCollectionEditorRender() {
+    collectionEditorRenderDebounceId = debounceRender(collectionEditorRenderDebounceId, () => {
+        collectionEditorRenderDebounceId = 0;
+        renderCollectionEditor();
+    });
+}
+
 function onStudyPreferencesChange() {
     updateUiPrefs({
         studyMode: elements.studyMode.value,
@@ -253,7 +280,7 @@ async function onFlashcardSubmit(event) {
 
 function onFlashcardSearchInput(event) {
     flashcardSearchTerm = event.target.value;
-    renderFlashcards();
+    scheduleFlashcardRender();
 }
 
 function onSelectVisibleFlashcards() {
@@ -308,7 +335,7 @@ async function onCollectionSubmit(event) {
 
 function onCollectionSearchInput(event) {
     collectionEditorSearchTerm = event.target.value;
-    renderCollectionEditor();
+    scheduleCollectionEditorRender();
 }
 
 function onCollectionFilterChange() {
@@ -442,7 +469,7 @@ async function onStudyAnswerSubmit(event) {
     elements.studyAnswer.disabled = true;
 
     await persist();
-    renderStudyInsights();
+    renderStudyLiveInsights();
 }
 
 function onStudyNext() {
@@ -856,6 +883,10 @@ function renderStudySetup() {
 
 function renderStudyInsights() {
     renderStudyHistory();
+    renderStudyLiveInsights();
+}
+
+function renderStudyLiveInsights() {
     renderStrugglingCards();
     renderCardStats();
 }
