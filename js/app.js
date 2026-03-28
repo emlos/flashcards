@@ -50,6 +50,11 @@ let selectedStudyCollectionIds = new Set(
 const selectedFlashcardIds = new Set();
 const MAX_IMPORT_ISSUES_TO_DISPLAY = 3;
 const SEARCH_INPUT_DEBOUNCE_MS = 120;
+const MAX_IMAGE_UPLOAD_SOURCE_BYTES = 15 * 1024 * 1024;
+const TARGET_IMAGE_UPLOAD_BYTES = Math.round(1.2 * 1024 * 1024);
+const HARD_IMAGE_UPLOAD_BYTES = 2 * 1024 * 1024;
+const MAX_IMAGE_UPLOAD_DIMENSION = 1600;
+const IMAGE_UPLOAD_QUALITY_STEPS = [0.92, 0.84, 0.76, 0.68, 0.6];
 let persistQueue = Promise.resolve(false);
 let flashcardRenderDebounceId = 0;
 let collectionEditorRenderDebounceId = 0;
@@ -197,8 +202,12 @@ function bindEvents() {
     elements.studyGermanCharacters.addEventListener("click", onStudyGermanCharacterClick);
     elements.studyNextButton.addEventListener("click", onStudyNext);
     elements.studyEndButton.addEventListener("click", endStudySession);
-    elements.backupImportMergeButton.addEventListener("click", () => closeBackupImportModal("merge"));
-    elements.backupImportReplaceButton.addEventListener("click", () => closeBackupImportModal("replace"));
+    elements.backupImportMergeButton.addEventListener("click", () =>
+        closeBackupImportModal("merge"),
+    );
+    elements.backupImportReplaceButton.addEventListener("click", () =>
+        closeBackupImportModal("replace"),
+    );
     elements.backupImportCancelButton.addEventListener("click", () => closeBackupImportModal(null));
     elements.backupImportModal.addEventListener("click", onBackupImportModalClick);
     elements.backupImportModal.addEventListener("keydown", onBackupImportModalKeyDown);
@@ -267,40 +276,76 @@ async function onFlashcardSubmit(event) {
     }
 
     const existingCard = findExistingFlashcardByGerman(german);
+    let successMessage = "";
 
-    if (existingCard) {
-        const { merged, added } = mergeEnglishAnswers(existingCard.englishAnswers, englishAnswers);
+    try {
+        if (existingCard) {
+            const { merged, added } = mergeEnglishAnswers(
+                existingCard.englishAnswers,
+                englishAnswers,
+            );
+            let imageUpdate = null;
 
-        existingCard.englishAnswers = merged;
+            if (imageFile) {
+                imageUpdate = await applyUploadedImageToCard(existingCard, imageFile);
+            }
 
-        if (imageFile && !existingCard.hasImage) {
-            await setFlashcardImage(existingCard, imageFile);
+            existingCard.englishAnswers = merged;
+
+            console.info(
+                `[Manual add] Reused existing card "${existingCard.german}". Added meanings: ${
+                    added.length > 0 ? added.join(", ") : "none"
+                }.` +
+                    `${imageUpdate?.replacedExisting ? " Replaced image." : imageUpdate ? " Added image." : ""}`,
+            );
+
+            successMessage = buildFlashcardSaveMessage({
+                german: existingCard.german,
+                addedMeanings: added,
+                imageUpdate,
+                reusedExistingCard: true,
+            });
+        } else {
+            const card = {
+                id: crypto.randomUUID(),
+                german,
+                englishAnswers,
+                imageData: "",
+                hasImage: false,
+            };
+
+            state.flashcards.push(card);
+
+            let imageUpdate = null;
+
+            try {
+                if (imageFile) {
+                    imageUpdate = await applyUploadedImageToCard(card, imageFile);
+                }
+            } catch (error) {
+                state.flashcards = state.flashcards.filter((item) => item.id !== card.id);
+                throw error;
+            }
+
+            successMessage = buildFlashcardSaveMessage({
+                german: card.german,
+                imageUpdate,
+                reusedExistingCard: false,
+            });
         }
 
-        console.info(
-            `[Manual add] Reused existing card "${existingCard.german}". Added meanings: ${
-                added.length > 0 ? added.join(", ") : "none"
-            }.`,
-        );
-    } else {
-        const card = {
-            id: crypto.randomUUID(),
-            german,
-            englishAnswers,
-            imageData: "",
-            hasImage: false,
-        };
+        const didPersist = await persist();
 
-        state.flashcards.push(card);
-
-        if (imageFile) {
-            await setFlashcardImage(card, imageFile);
+        if (didPersist && successMessage) {
+            showAppStatusMessage(successMessage, true);
         }
+
+        elements.flashcardForm.reset();
+        renderAll();
+    } catch (error) {
+        console.error("Failed to save the flashcard.", error);
+        showAppStatusMessage(error?.message || "Could not process that image upload.", false);
     }
-
-    await persist();
-    elements.flashcardForm.reset();
-    renderAll();
 }
 
 function onFlashcardSearchInput(event) {
@@ -386,42 +431,80 @@ async function onCollectionFlashcardSubmit(event) {
     }
 
     let card = findExistingFlashcardByGerman(german);
+    let successMessage = "";
 
-    if (card) {
-        const { merged, added } = mergeEnglishAnswers(card.englishAnswers, englishAnswers);
-        card.englishAnswers = merged;
+    try {
+        if (card) {
+            const { merged, added } = mergeEnglishAnswers(card.englishAnswers, englishAnswers);
+            let imageUpdate = null;
 
-        if (imageFile && !card.hasImage) {
-            await setFlashcardImage(card, imageFile);
+            if (imageFile) {
+                imageUpdate = await applyUploadedImageToCard(card, imageFile);
+            }
+
+            card.englishAnswers = merged;
+
+            if (added.length > 0 || !collection.cardIds.includes(card.id) || imageUpdate) {
+                console.info(
+                    `[Collection add] Reused existing card "${card.german}" in "${collection.name}". Added meanings: ${
+                        added.length > 0 ? added.join(", ") : "none"
+                    }.` +
+                        `${imageUpdate?.replacedExisting ? " Replaced image." : imageUpdate ? " Added image." : ""}`,
+                );
+            }
+
+            ensureCardInCollection(collection.id, card.id);
+            successMessage = buildCollectionFlashcardSaveMessage({
+                card,
+                collectionName: collection.name,
+                addedMeanings: added,
+                imageUpdate,
+                addedToCollection: true,
+                reusedExistingCard: true,
+            });
+        } else {
+            card = {
+                id: crypto.randomUUID(),
+                german,
+                englishAnswers,
+                imageData: "",
+                hasImage: false,
+            };
+            state.flashcards.push(card);
+
+            let imageUpdate = null;
+
+            try {
+                if (imageFile) {
+                    imageUpdate = await applyUploadedImageToCard(card, imageFile);
+                }
+            } catch (error) {
+                state.flashcards = state.flashcards.filter((item) => item.id !== card.id);
+                throw error;
+            }
+
+            ensureCardInCollection(collection.id, card.id);
+            successMessage = buildCollectionFlashcardSaveMessage({
+                card,
+                collectionName: collection.name,
+                imageUpdate,
+                addedToCollection: true,
+                reusedExistingCard: false,
+            });
         }
 
-        if (added.length > 0 || !collection.cardIds.includes(card.id)) {
-            console.info(
-                `[Collection add] Reused existing card "${card.german}" in "${collection.name}". Added meanings: ${
-                    added.length > 0 ? added.join(", ") : "none"
-                }.`,
-            );
-        }
-    } else {
-        card = {
-            id: crypto.randomUUID(),
-            german,
-            englishAnswers,
-            imageData: "",
-            hasImage: false,
-        };
-        state.flashcards.push(card);
+        const didPersist = await persist();
 
-        if (imageFile) {
-            await setFlashcardImage(card, imageFile);
+        if (didPersist && successMessage) {
+            showAppStatusMessage(successMessage, true);
         }
+
+        elements.collectionFlashcardForm.reset();
+        renderAll();
+    } catch (error) {
+        console.error("Failed to save the collection flashcard.", error);
+        showAppStatusMessage(error?.message || "Could not process that image upload.", false);
     }
-
-    ensureCardInCollection(collection.id, card.id);
-
-    await persist();
-    elements.collectionFlashcardForm.reset();
-    renderAll();
 }
 
 function onStudySetupSubmit(event) {
@@ -444,17 +527,34 @@ function onStudySetupSubmit(event) {
     }
 
     let cards = getStudyCardsForSelection();
+    const selectedCardCount = cards.length;
+    let skippedCardsWithoutImages = 0;
 
     if (mode === "image-de") {
         cards = cards.filter((card) => card.hasImage);
+        skippedCardsWithoutImages = selectedCardCount - cards.length;
     }
 
+    const studyableCardCount = cardLimit && cardLimit < cards.length ? cardLimit : cards.length;
+
     if (cards.length === 0) {
-        showStudySetupMessage(getStudySelectionEmptyMessage(mode === "image-de"));
+        showStudySetupMessage(
+            getStudyImageModeMessage({
+                selectedCardCount,
+                skippedCardsWithoutImages,
+                remainingCardsCount: cards.length,
+            }) || getStudySelectionEmptyMessage(mode === "image-de"),
+        );
         return;
     }
 
-    showStudySetupMessage("");
+    showStudySetupMessage(
+        getStudyImageModeMessage({
+            selectedCardCount,
+            skippedCardsWithoutImages,
+            remainingCardsCount: studyableCardCount,
+        }),
+    );
     studySession = createStudySession(cards, mode);
     studySession.collectionIds = [...selectedStudyCollectionIds];
     studySession.collectionLabel = getStudyCollectionSummaryText();
@@ -575,7 +675,9 @@ async function onBulkImport() {
             return;
         }
 
-        const importResult = await applyImportedFlashcardEntries(entries, { logLabel: "Bulk import" });
+        const importResult = await applyImportedFlashcardEntries(entries, {
+            logLabel: "Bulk import",
+        });
 
         await persist();
         finalizeImportState();
@@ -1404,7 +1506,7 @@ async function applyImportedFlashcardEntries(entries, { logLabel = "Import" } = 
             card.englishAnswers = mergeResult.merged;
             addedMeanings = mergeResult.added;
 
-            if (entry.card.imageData && !card.hasImage) {
+            if (entry.card.imageData) {
                 await setFlashcardImage(card, entry.card.imageData);
                 adoptedImage = true;
             }
@@ -1624,9 +1726,8 @@ function openBackupImportModal(importedState, issues) {
         elements.backupImportModalWarnings.classList.add("hidden");
     }
 
-    lastFocusedElementBeforeBackupImportModal = document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
+    lastFocusedElementBeforeBackupImportModal =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
     document.body.classList.add("modal-open");
     elements.backupImportModal.classList.remove("hidden");
 
@@ -1908,6 +2009,11 @@ function insertTextAtCursor(input, text) {
 
 function deleteFlashcards(cardIds) {
     const idsToDelete = new Set(cardIds);
+
+    state.flashcards
+        .filter((card) => idsToDelete.has(card.id))
+        .forEach((card) => revokeFlashcardImageUrl(card.imageData));
+
     state.flashcards = state.flashcards.filter((card) => !idsToDelete.has(card.id));
 
     state.collections = state.collections.map((collection) => ({
@@ -2099,7 +2205,47 @@ function createFlashcardEditPanel(card) {
     englishInput.placeholder = "dog; hound";
     englishLabel.appendChild(englishInput);
 
-    panel.append(germanLabel, englishLabel);
+    const imageSection = document.createElement("div");
+    imageSection.className = "flashcard-edit-image-section";
+
+    const imageHelp = document.createElement("p");
+    imageHelp.className = "muted flashcard-edit-help";
+    imageHelp.textContent =
+        "Upload a new image to replace the current one. Large photos are resized and compressed automatically.";
+    imageSection.appendChild(imageHelp);
+
+    if (card.imageData) {
+        const preview = document.createElement("img");
+        preview.className = "flashcard-edit-image-preview";
+        preview.src = card.imageData;
+        preview.alt = `${card.german} image preview`;
+        imageSection.appendChild(preview);
+    } else {
+        const noImage = document.createElement("p");
+        noImage.className = "muted flashcard-edit-image-note";
+        noImage.textContent = "No image attached yet.";
+        imageSection.appendChild(noImage);
+    }
+
+    const imageLabel = document.createElement("label");
+    imageLabel.textContent = card.hasImage ? "Replace image" : "Add image";
+    const imageInput = document.createElement("input");
+    imageInput.type = "file";
+    imageInput.accept = "image/*";
+    imageLabel.appendChild(imageInput);
+    imageSection.appendChild(imageLabel);
+
+    const removeImageLabel = document.createElement("label");
+    removeImageLabel.className = "flashcard-edit-remove-option";
+    const removeImageCheckbox = document.createElement("input");
+    removeImageCheckbox.type = "checkbox";
+    removeImageCheckbox.disabled = !card.hasImage;
+    const removeImageText = document.createElement("span");
+    removeImageText.textContent = "Remove image";
+    removeImageLabel.append(removeImageCheckbox, removeImageText);
+    imageSection.appendChild(removeImageLabel);
+
+    panel.append(germanLabel, englishLabel, imageSection);
 
     const help = document.createElement("p");
     help.className = "muted flashcard-edit-help";
@@ -2155,11 +2301,13 @@ function createFlashcardEditPanel(card) {
     actions.append(saveButton, cancelButton);
     panel.appendChild(actions);
 
-    panel.addEventListener("submit", (event) => {
+    panel.addEventListener("submit", async (event) => {
         event.preventDefault();
 
         const german = germanInput.value.trim();
         const englishAnswers = parseEnglishAnswersInput(englishInput.value);
+        const imageFile = imageInput.files[0];
+        const shouldRemoveImage = removeImageCheckbox.checked;
 
         if (!german || englishAnswers.length === 0) {
             window.alert("Please enter a German word and at least one English meaning.");
@@ -2174,18 +2322,49 @@ function createFlashcardEditPanel(card) {
             return;
         }
 
-        card.german = german;
-        card.englishAnswers = englishAnswers;
+        saveButton.disabled = true;
+        cancelButton.disabled = true;
 
-        const selectedCollectionIds = Array.from(
-            collectionsWrapper.querySelectorAll('input[type="checkbox"]:checked'),
-            (input) => input.value,
-        );
-        setCardMemberships(card.id, selectedCollectionIds);
+        try {
+            let imageUpdate = null;
 
-        editingFlashcardId = null;
-        persist();
-        renderAll();
+            if (imageFile) {
+                imageUpdate = await applyUploadedImageToCard(card, imageFile);
+            } else if (shouldRemoveImage && card.hasImage) {
+                clearFlashcardImage(card);
+                imageUpdate = { removed: true };
+            }
+
+            card.german = german;
+            card.englishAnswers = englishAnswers;
+
+            const selectedCollectionIds = Array.from(
+                collectionsWrapper.querySelectorAll('input[type="checkbox"]:checked'),
+                (input) => input.value,
+            );
+            setCardMemberships(card.id, selectedCollectionIds);
+
+            const didPersist = await persist();
+
+            editingFlashcardId = null;
+
+            if (didPersist) {
+                showAppStatusMessage(
+                    buildFlashcardEditSaveMessage({
+                        german: card.german,
+                        imageUpdate,
+                    }),
+                    true,
+                );
+            }
+
+            renderAll();
+        } catch (error) {
+            console.error("Failed to save flashcard changes.", error);
+            showAppStatusMessage(error?.message || "Could not process that image upload.", false);
+            saveButton.disabled = false;
+            cancelButton.disabled = false;
+        }
     });
 
     return panel;
@@ -2194,6 +2373,106 @@ function createFlashcardEditPanel(card) {
 function toggleFlashcardEdit(cardId) {
     editingFlashcardId = editingFlashcardId === cardId ? null : cardId;
     renderFlashcards();
+}
+
+function buildFlashcardSaveMessage({
+    german,
+    addedMeanings = [],
+    imageUpdate = null,
+    reusedExistingCard = false,
+}) {
+    const messageParts = [];
+
+    if (reusedExistingCard) {
+        messageParts.push(`Updated existing flashcard “${german}”.`);
+
+        if (addedMeanings.length > 0) {
+            messageParts.push(
+                `Added meaning${addedMeanings.length === 1 ? "" : "s"}: ${addedMeanings.join(", ")}.`,
+            );
+        }
+    } else {
+        messageParts.push(`Saved flashcard “${german}”.`);
+    }
+
+    appendImageUpdateMessageParts(messageParts, imageUpdate);
+
+    return messageParts.join(" ");
+}
+
+function buildCollectionFlashcardSaveMessage({
+    card,
+    collectionName,
+    addedMeanings = [],
+    imageUpdate = null,
+    reusedExistingCard = false,
+}) {
+    const messageParts = [];
+
+    if (reusedExistingCard) {
+        messageParts.push(`Updated flashcard “${card.german}” in “${collectionName}”.`);
+
+        if (addedMeanings.length > 0) {
+            messageParts.push(
+                `Added meaning${addedMeanings.length === 1 ? "" : "s"}: ${addedMeanings.join(", ")}.`,
+            );
+        }
+    } else {
+        messageParts.push(`Added flashcard “${card.german}” to “${collectionName}”.`);
+    }
+
+    appendImageUpdateMessageParts(messageParts, imageUpdate);
+
+    return messageParts.join(" ");
+}
+
+function buildFlashcardEditSaveMessage({ german, imageUpdate = null }) {
+    const messageParts = [`Saved changes to “${german}”.`];
+    appendImageUpdateMessageParts(messageParts, imageUpdate);
+    return messageParts.join(" ");
+}
+
+function appendImageUpdateMessageParts(messageParts, imageUpdate) {
+    if (!imageUpdate) {
+        return;
+    }
+
+    if (imageUpdate.removed) {
+        messageParts.push("Removed image.");
+        return;
+    }
+
+    messageParts.push(imageUpdate.replacedExisting ? "Replaced image." : "Added image.");
+
+    if (imageUpdate.wasResized || imageUpdate.wasCompressed) {
+        messageParts.push(
+            `Stored ${formatFileSize(imageUpdate.finalSizeBytes)} instead of ${formatFileSize(
+                imageUpdate.originalSizeBytes,
+            )}.`,
+        );
+    }
+}
+
+function getStudyImageModeMessage({
+    selectedCardCount,
+    skippedCardsWithoutImages,
+    remainingCardsCount,
+}) {
+    if (skippedCardsWithoutImages <= 0 || selectedCardCount <= 0) {
+        return "";
+    }
+
+    if (remainingCardsCount <= 0) {
+        return `Image → German only uses flashcards with images. ${skippedCardsWithoutImages} selected card${
+            skippedCardsWithoutImages === 1 ? " was" : "s were"
+        } skipped because ${skippedCardsWithoutImages === 1 ? "it has" : "they have"} no image.`;
+    }
+
+    return `Image → German will study ${remainingCardsCount} card${
+        remainingCardsCount === 1 ? "" : "s"
+    }. ${skippedCardsWithoutImages} selected card${skippedCardsWithoutImages === 1 ? " was" : "s were"} skipped because ${
+        skippedCardsWithoutImages === 1 ? "it has" : "they have"
+    } no image.`;
 }
 
 function setCardMemberships(cardId, collectionIds) {
@@ -2253,12 +2532,183 @@ function getValidSelectedCollectionId(candidateId) {
 async function setFlashcardImage(card, imageSource) {
     const nextImageUrl = await saveFlashcardImage(card.id, imageSource);
 
-    if (card.imageData && card.imageData.startsWith("blob:")) {
-        URL.revokeObjectURL(card.imageData);
-    }
+    revokeFlashcardImageUrl(card.imageData);
 
     card.imageData = nextImageUrl;
     card.hasImage = true;
+}
+
+async function applyUploadedImageToCard(card, imageFile) {
+    const replacedExisting = Boolean(card.hasImage);
+    const preparedImage = await prepareUploadedImageForStorage(imageFile);
+    await setFlashcardImage(card, preparedImage.blob);
+
+    return {
+        originalSizeBytes: preparedImage.originalSizeBytes,
+        finalSizeBytes: preparedImage.finalSizeBytes,
+        wasCompressed: preparedImage.wasCompressed,
+        wasResized: preparedImage.wasResized,
+        replacedExisting,
+    };
+}
+
+function clearFlashcardImage(card) {
+    revokeFlashcardImageUrl(card.imageData);
+    card.imageData = "";
+    card.hasImage = false;
+}
+
+function revokeFlashcardImageUrl(imageUrl) {
+    if (String(imageUrl || "").startsWith("blob:")) {
+        URL.revokeObjectURL(imageUrl);
+    }
+}
+
+async function prepareUploadedImageForStorage(file) {
+    if (!(file instanceof Blob) || !String(file.type || "").startsWith("image/")) {
+        throw new Error("Please choose a valid image file.");
+    }
+
+    if (file.size > MAX_IMAGE_UPLOAD_SOURCE_BYTES) {
+        throw new Error(
+            `That image is too large to process (${formatFileSize(file.size)}). Please choose one under ${formatFileSize(
+                MAX_IMAGE_UPLOAD_SOURCE_BYTES,
+            )}.`,
+        );
+    }
+
+    const imageInfo = await readImageDimensions(file);
+    const scale = Math.min(
+        1,
+        MAX_IMAGE_UPLOAD_DIMENSION / imageInfo.width,
+        MAX_IMAGE_UPLOAD_DIMENSION / imageInfo.height,
+    );
+    const targetWidth = Math.max(1, Math.round(imageInfo.width * scale));
+    const targetHeight = Math.max(1, Math.round(imageInfo.height * scale));
+    const needsResize = targetWidth !== imageInfo.width || targetHeight !== imageInfo.height;
+
+    if (!needsResize && file.size <= TARGET_IMAGE_UPLOAD_BYTES) {
+        return {
+            blob: file,
+            originalSizeBytes: file.size,
+            finalSizeBytes: file.size,
+            wasCompressed: false,
+            wasResized: false,
+            replacedExisting: false,
+        };
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+        throw new Error("Could not prepare that image for upload.");
+    }
+
+    context.drawImage(imageInfo.image, 0, 0, targetWidth, targetHeight);
+
+    let bestBlob = null;
+
+    for (const quality of IMAGE_UPLOAD_QUALITY_STEPS) {
+        const candidate = await canvasToBlob(canvas, "image/webp", quality);
+
+        if (!bestBlob || candidate.size < bestBlob.size) {
+            bestBlob = candidate;
+        }
+
+        if (candidate.size <= TARGET_IMAGE_UPLOAD_BYTES) {
+            bestBlob = candidate;
+            break;
+        }
+    }
+
+    if (!bestBlob) {
+        throw new Error("Could not prepare that image for upload.");
+    }
+
+    if (!needsResize && file.size <= HARD_IMAGE_UPLOAD_BYTES && bestBlob.size >= file.size) {
+        return {
+            blob: file,
+            originalSizeBytes: file.size,
+            finalSizeBytes: file.size,
+            wasCompressed: false,
+            wasResized: false,
+        };
+    }
+
+    if (bestBlob.size > HARD_IMAGE_UPLOAD_BYTES) {
+        throw new Error(
+            `That image is still too large after resizing (${formatFileSize(
+                bestBlob.size,
+            )}). Please choose a smaller image.`,
+        );
+    }
+
+    return {
+        blob: bestBlob,
+        originalSizeBytes: file.size,
+        finalSizeBytes: bestBlob.size,
+        wasCompressed: bestBlob.size < file.size || bestBlob.type !== file.type,
+        wasResized: needsResize,
+    };
+}
+
+function readImageDimensions(file) {
+    return new Promise((resolve, reject) => {
+        const imageUrl = URL.createObjectURL(file);
+        const image = new Image();
+
+        image.addEventListener("load", () => {
+            const width = image.naturalWidth || image.width;
+            const height = image.naturalHeight || image.height;
+            URL.revokeObjectURL(imageUrl);
+            resolve({
+                image,
+                width,
+                height,
+            });
+        });
+
+        image.addEventListener("error", () => {
+            URL.revokeObjectURL(imageUrl);
+            reject(new Error("Could not read that image file."));
+        });
+
+        image.src = imageUrl;
+    });
+}
+
+function canvasToBlob(canvas, type, quality) {
+    return new Promise((resolve, reject) => {
+        canvas.toBlob(
+            (blob) => {
+                if (blob instanceof Blob) {
+                    resolve(blob);
+                    return;
+                }
+
+                reject(new Error("Could not prepare that image for upload."));
+            },
+            type,
+            quality,
+        );
+    });
+}
+
+function formatFileSize(bytes) {
+    const value = Number(bytes) || 0;
+
+    if (value < 1024) {
+        return `${value} B`;
+    }
+
+    if (value < 1024 * 1024) {
+        return `${(value / 1024).toFixed(1)} KB`;
+    }
+
+    return `${(value / (1024 * 1024)).toFixed(2)} MB`;
 }
 
 function cloneStateForPersistence(nextState) {
