@@ -244,32 +244,79 @@ async function onBulkImport() {
         const text = await file.text();
         const importedEntries = parseBulkWords(text);
 
+        let createdCardsCount = 0;
+        let reusedCardsCount = 0;
+        let createdCollectionsCount = 0;
+
+        const duplicateLogs = [];
+
         for (const entry of importedEntries) {
-            state.flashcards.push(entry.card);
+            let card = findExistingFlashcardByGerman(entry.card.german);
+            let isDuplicate = Boolean(card);
+
+            if (!card) {
+                card = entry.card;
+                state.flashcards.push(card);
+                createdCardsCount += 1;
+            } else {
+                reusedCardsCount += 1;
+            }
+
+            const addedToCollections = [];
 
             for (const collectionName of entry.collectionNames) {
-                let collection = state.collections.find(
-                    (item) => item.name.toLocaleLowerCase() === collectionName.toLocaleLowerCase(),
-                );
+                const { collection, created } = getOrCreateCollectionByName(collectionName);
 
                 if (!collection) {
-                    collection = {
-                        id: crypto.randomUUID(),
-                        name: collectionName,
-                        cardIds: [],
-                    };
-                    state.collections.push(collection);
+                    continue;
                 }
 
-                if (!collection.cardIds.includes(entry.card.id)) {
-                    collection.cardIds.push(entry.card.id);
+                if (created) {
+                    createdCollectionsCount += 1;
+                }
+
+                if (!collection.cardIds.includes(card.id)) {
+                    collection.cardIds.push(card.id);
+                    addedToCollections.push(collection.name);
                 }
             }
+
+            if (isDuplicate) {
+                duplicateLogs.push({
+                    german: entry.card.german,
+                    reusedId: card.id,
+                    addedToCollections,
+                });
+            }
+        }
+
+        if (duplicateLogs.length > 0) {
+            console.groupCollapsed(
+                `[Bulk import] Reused ${duplicateLogs.length} duplicate word(s)`,
+            );
+
+            duplicateLogs.forEach((item) => {
+                const extra =
+                    item.addedToCollections.length > 0
+                        ? ` Added to collections: ${item.addedToCollections.join(", ")}`
+                        : " No new collection links were needed.";
+
+                console.info(
+                    `Duplicate word reused: "${item.german}" (card id: ${item.reusedId}).${extra}`,
+                );
+            });
+
+            console.groupEnd();
         }
 
         persist();
         renderAll();
-        showImportExportMessage(`Imported ${importedEntries.length} flashcards.`, true);
+
+        showImportExportMessage(
+            `Imported complete. Created ${createdCardsCount} new flashcard(s), reused ${reusedCardsCount} duplicate(s), created ${createdCollectionsCount} new collection(s).`,
+            true,
+        );
+
         elements.bulkImportFile.value = "";
     } catch (error) {
         showImportExportMessage(error.message || "Bulk import failed.", false);
@@ -567,4 +614,40 @@ function escapeHtml(value) {
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#39;");
+}
+
+function normalizeWord(value) {
+    return String(value || "")
+        .trim()
+        .toLocaleLowerCase();
+}
+
+function findExistingFlashcardByGerman(german) {
+    const normalizedGerman = normalizeWord(german);
+
+    return state.flashcards.find((card) => normalizeWord(card.german) === normalizedGerman) || null;
+}
+
+function getOrCreateCollectionByName(name) {
+    const normalizedName = normalizeWord(name);
+
+    if (!normalizedName) {
+        return { collection: null, created: false };
+    }
+
+    let collection =
+        state.collections.find((item) => normalizeWord(item.name) === normalizedName) || null;
+
+    if (collection) {
+        return { collection, created: false };
+    }
+
+    collection = {
+        id: crypto.randomUUID(),
+        name: name.trim(),
+        cardIds: [],
+    };
+
+    state.collections.push(collection);
+    return { collection, created: true };
 }
