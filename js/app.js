@@ -29,6 +29,7 @@ let flashcardSearchTerm = "";
 let collectionEditorSearchTerm = "";
 let collectionEditorMembershipFilter = "all";
 let collectionEditorFilterCollectionId = "";
+let editingFlashcardId = null;
 const selectedFlashcardIds = new Set();
 
 const elements = {
@@ -60,6 +61,10 @@ const elements = {
     collectionSearch: document.getElementById("collection-search"),
     collectionMembershipFilter: document.getElementById("collection-membership-filter"),
     collectionFilterCollection: document.getElementById("collection-filter-collection"),
+    collectionFlashcardForm: document.getElementById("collection-flashcard-form"),
+    collectionFlashcardGerman: document.getElementById("collection-flashcard-german"),
+    collectionFlashcardEnglish: document.getElementById("collection-flashcard-english"),
+    collectionFlashcardImage: document.getElementById("collection-flashcard-image"),
     collectionEditorSummary: document.getElementById("collection-editor-summary"),
     collectionCardsEditor: document.getElementById("collection-cards-editor"),
 
@@ -108,6 +113,7 @@ function bindEvents() {
     elements.collectionSearch.addEventListener("input", onCollectionSearchInput);
     elements.collectionMembershipFilter.addEventListener("change", onCollectionFilterChange);
     elements.collectionFilterCollection.addEventListener("change", onCollectionFilterChange);
+    elements.collectionFlashcardForm.addEventListener("submit", onCollectionFlashcardSubmit);
 
     elements.studySetupForm.addEventListener("submit", onStudySetupSubmit);
     elements.studyAnswerForm.addEventListener("submit", onStudyAnswerSubmit);
@@ -235,6 +241,57 @@ function onCollectionFilterChange() {
     collectionEditorMembershipFilter = elements.collectionMembershipFilter.value;
     collectionEditorFilterCollectionId = elements.collectionFilterCollection.value;
     renderCollectionEditor();
+}
+
+async function onCollectionFlashcardSubmit(event) {
+    event.preventDefault();
+
+    const collection = state.collections.find((item) => item.id === selectedCollectionId);
+    if (!collection) {
+        return;
+    }
+
+    const german = elements.collectionFlashcardGerman.value.trim();
+    const englishAnswers = parseEnglishAnswersInput(elements.collectionFlashcardEnglish.value);
+    const imageFile = elements.collectionFlashcardImage.files[0];
+
+    if (!german || englishAnswers.length === 0) {
+        return;
+    }
+
+    const imageData = imageFile ? await fileToDataUrl(imageFile) : "";
+    let card = findExistingFlashcardByGerman(german);
+
+    if (card) {
+        const { merged, added } = mergeEnglishAnswers(card.englishAnswers, englishAnswers);
+        card.englishAnswers = merged;
+
+        if (imageData && !card.imageData) {
+            card.imageData = imageData;
+        }
+
+        if (added.length > 0 || !collection.cardIds.includes(card.id)) {
+            console.info(
+                `[Collection add] Reused existing card "${card.german}" in "${collection.name}". Added meanings: ${
+                    added.length > 0 ? added.join(", ") : "none"
+                }.`
+            );
+        }
+    } else {
+        card = {
+            id: crypto.randomUUID(),
+            german,
+            englishAnswers,
+            imageData,
+        };
+        state.flashcards.push(card);
+    }
+
+    ensureCardInCollection(collection.id, card.id);
+
+    persist();
+    elements.collectionFlashcardForm.reset();
+    renderAll();
 }
 
 function onStudySetupSubmit(event) {
@@ -513,6 +570,10 @@ function renderFlashcards() {
     `;
         main.appendChild(createCollectionPillsContainer(card.id));
 
+        if (editingFlashcardId === card.id) {
+            main.appendChild(createFlashcardEditPanel(card));
+        }
+
         const side = document.createElement("div");
         side.className = "item-row-side";
 
@@ -523,6 +584,13 @@ function renderFlashcards() {
             img.alt = card.german;
             side.appendChild(img);
         }
+
+        const editButton = document.createElement("button");
+        editButton.type = "button";
+        editButton.className = editingFlashcardId === card.id ? "" : "secondary";
+        editButton.textContent = editingFlashcardId === card.id ? "Editing" : "Edit";
+        editButton.addEventListener("click", () => toggleFlashcardEdit(card.id));
+        side.appendChild(editButton);
 
         const deleteButton = document.createElement("button");
         deleteButton.type = "button";
@@ -614,6 +682,7 @@ function renderCollectionEditor() {
         elements.collectionEditor.classList.add("hidden");
         elements.collectionEditorEmpty.classList.remove("hidden");
         elements.selectedCollectionName.textContent = "Select a collection";
+        elements.collectionFlashcardForm.reset();
         elements.collectionCardsEditor.innerHTML = "";
         elements.collectionEditorSummary.textContent = "";
         return;
@@ -723,6 +792,10 @@ function deleteFlashcards(cardIds) {
     }));
 
     idsToDelete.forEach((id) => selectedFlashcardIds.delete(id));
+
+    if (editingFlashcardId && idsToDelete.has(editingFlashcardId)) {
+        editingFlashcardId = null;
+    }
 
     persist();
     renderAll();
@@ -868,6 +941,150 @@ function createCollectionPillsContainer(cardId) {
 
 function getCardMemberships(cardId) {
     return state.collections.filter((collection) => collection.cardIds.includes(cardId));
+}
+
+function createFlashcardEditPanel(card) {
+    const panel = document.createElement("form");
+    panel.className = "flashcard-edit-panel flashcard-edit-grid";
+
+    const germanLabel = document.createElement("label");
+    germanLabel.textContent = "German";
+    const germanInput = document.createElement("input");
+    germanInput.type = "text";
+    germanInput.value = card.german;
+    germanLabel.appendChild(germanInput);
+
+    const englishLabel = document.createElement("label");
+    englishLabel.textContent = "English meaning(s)";
+    const englishInput = document.createElement("input");
+    englishInput.type = "text";
+    englishInput.value = (card.englishAnswers || []).join("; ");
+    englishInput.placeholder = "dog; hound";
+    englishLabel.appendChild(englishInput);
+
+    panel.append(germanLabel, englishLabel);
+
+    const help = document.createElement("p");
+    help.className = "muted flashcard-edit-help";
+    help.textContent = "Select which collections this flashcard belongs to.";
+    panel.appendChild(help);
+
+    const collectionsWrapper = document.createElement("div");
+    collectionsWrapper.className = "flashcard-edit-collections";
+
+    if (state.collections.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "empty-state";
+        empty.textContent = "Create a collection first to assign this flashcard.";
+        collectionsWrapper.appendChild(empty);
+    } else {
+        state.collections.forEach((collection) => {
+            const option = document.createElement("label");
+            option.className = "flashcard-edit-collection-option";
+
+            const checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            checkbox.value = collection.id;
+            checkbox.checked = collection.cardIds.includes(card.id);
+
+            const text = document.createElement("span");
+            text.innerHTML = `<span class="collection-pill-dot" style="--collection-color: ${escapeHtml(
+                getCollectionColor(collection),
+            )}; background: ${escapeHtml(getCollectionColor(collection))};"></span>${escapeHtml(collection.name)}`;
+
+            option.append(checkbox, text);
+            collectionsWrapper.appendChild(option);
+        });
+    }
+
+    panel.appendChild(collectionsWrapper);
+
+    const actions = document.createElement("div");
+    actions.className = "flashcard-edit-actions";
+
+    const saveButton = document.createElement("button");
+    saveButton.type = "submit";
+    saveButton.textContent = "Save changes";
+
+    const cancelButton = document.createElement("button");
+    cancelButton.type = "button";
+    cancelButton.className = "secondary";
+    cancelButton.textContent = "Cancel";
+    cancelButton.addEventListener("click", () => {
+        editingFlashcardId = null;
+        renderFlashcards();
+    });
+
+    actions.append(saveButton, cancelButton);
+    panel.appendChild(actions);
+
+    panel.addEventListener("submit", (event) => {
+        event.preventDefault();
+
+        const german = germanInput.value.trim();
+        const englishAnswers = parseEnglishAnswersInput(englishInput.value);
+
+        if (!german || englishAnswers.length === 0) {
+            window.alert("Please enter a German word and at least one English meaning.");
+            return;
+        }
+
+        const conflictingCard = findExistingFlashcardByGerman(german);
+        if (conflictingCard && conflictingCard.id !== card.id) {
+            window.alert(
+                `A different flashcard already uses the German word "${conflictingCard.german}". Edit that card instead or delete it first.`
+            );
+            return;
+        }
+
+        card.german = german;
+        card.englishAnswers = englishAnswers;
+
+        const selectedCollectionIds = Array.from(
+            collectionsWrapper.querySelectorAll('input[type="checkbox"]:checked'),
+            (input) => input.value,
+        );
+        setCardMemberships(card.id, selectedCollectionIds);
+
+        editingFlashcardId = null;
+        persist();
+        renderAll();
+    });
+
+    return panel;
+}
+
+function toggleFlashcardEdit(cardId) {
+    editingFlashcardId = editingFlashcardId === cardId ? null : cardId;
+    renderFlashcards();
+}
+
+function setCardMemberships(cardId, collectionIds) {
+    const selectedIds = new Set(collectionIds);
+
+    state.collections.forEach((collection) => {
+        const shouldInclude = selectedIds.has(collection.id);
+        const isIncluded = collection.cardIds.includes(cardId);
+
+        if (shouldInclude && !isIncluded) {
+            collection.cardIds.push(cardId);
+        }
+
+        if (!shouldInclude && isIncluded) {
+            collection.cardIds = collection.cardIds.filter((id) => id !== cardId);
+        }
+    });
+}
+
+function ensureCardInCollection(collectionId, cardId) {
+    const collection = state.collections.find((item) => item.id === collectionId);
+    if (!collection) {
+        return;
+    }
+
+    if (!collection.cardIds.includes(cardId)) {
+        collection.cardIds.push(cardId);
+    }
 }
 
 function persist() {

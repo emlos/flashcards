@@ -133,6 +133,27 @@
                 </div>
               </div>
 
+              <div class="card nested-card">
+                <details>
+                  <summary>Create Flashcard in This Collection</summary>
+                  <form id="collection-flashcard-form" class="stack-form">
+                    <label>
+                      German
+                      <input type="text" id="collection-flashcard-german" required />
+                    </label>
+                    <label>
+                      English meaning(s)
+                      <input type="text" id="collection-flashcard-english" placeholder="dog; hound" required />
+                    </label>
+                    <label>
+                      Optional image
+                      <input type="file" id="collection-flashcard-image" accept="image/*" />
+                    </label>
+                    <button type="submit">Add to this collection</button>
+                  </form>
+                </details>
+              </div>
+
               <p id="collection-editor-summary" class="muted"></p>
               <div id="collection-cards-editor" class="checkbox-list"></div>
             </div>
@@ -208,7 +229,8 @@
           <div class="card">
             <h3>Bulk Import Words</h3>
             <p>TXT format: <code>German | English1; English2</code> or
-              <code>German | English1; English2 | Collection A, Collection B</code></p>
+              <code>German | English1; English2 | Collection A, Collection B</code>
+            </p>
             <input type="file" id="bulk-import-file" accept=".txt" />
             <button id="bulk-import-button" type="button">Import words</button>
           </div>
