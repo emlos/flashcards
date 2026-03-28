@@ -27,34 +27,42 @@ export function getCurrentPrompt(session) {
 }
 
 export function buildPrompt(card, mode) {
-    if (mode === "de-en") {
+    const promptMode = resolvePromptMode(card, mode);
+
+    if (promptMode === "de-en") {
         return {
+            promptMode,
             promptText: card.german,
             correctAnswers: card.englishAnswers || [],
             imageData: "",
+            expectsGermanAnswer: false,
         };
     }
 
-    if (mode === "en-de") {
+    if (promptMode === "en-de") {
         const englishAnswers = card.englishAnswers || [];
         const promptText = englishAnswers[Math.floor(Math.random() * englishAnswers.length)] || "";
 
         return {
+            promptMode,
             promptText,
             correctAnswers: [card.german],
             imageData: "",
+            expectsGermanAnswer: true,
         };
     }
 
-    if (mode === "image-de") {
+    if (promptMode === "image-de") {
         return {
+            promptMode,
             promptText: "Type the German word for this image.",
             correctAnswers: [card.german],
             imageData: card.imageData || "",
+            expectsGermanAnswer: true,
         };
     }
 
-    throw new Error(`Unknown study mode: ${mode}`);
+    throw new Error(`Unknown study mode: ${promptMode}`);
 }
 
 export function submitStudyAnswer(session, input) {
@@ -71,7 +79,7 @@ export function submitStudyAnswer(session, input) {
     const result = evaluateAnswer({
         input,
         correctAnswers: prompt.correctAnswers,
-        expectsGermanAnswer: isGermanAnswerMode(session.mode),
+        expectsGermanAnswer: prompt.expectsGermanAnswer,
     });
 
     session.answered = true;
@@ -92,6 +100,20 @@ export function isSessionFinished(session) {
 
 export function isGermanAnswerMode(mode) {
     return mode === "en-de" || mode === "image-de";
+}
+
+function resolvePromptMode(card, mode) {
+    if (mode !== "random") {
+        return mode;
+    }
+
+    const availableModes = ["de-en", "en-de"];
+
+    if (card?.imageData) {
+        availableModes.push("image-de");
+    }
+
+    return availableModes[Math.floor(Math.random() * availableModes.length)];
 }
 
 function evaluateAnswer({ input, correctAnswers, expectsGermanAnswer }) {

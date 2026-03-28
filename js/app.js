@@ -6,8 +6,9 @@ import {
     submitStudyAnswer,
     advanceSession,
     isSessionFinished,
-    isGermanAnswerMode,
 } from "./study-mode.js";
+
+const STUDY_ALL_COLLECTION_ID = "__all__";
 
 const DEFAULT_COLLECTION_COLORS = [
     "#4f46e5",
@@ -30,6 +31,7 @@ let collectionEditorSearchTerm = "";
 let collectionEditorMembershipFilter = "all";
 let collectionEditorFilterCollectionId = "";
 let editingFlashcardId = null;
+let selectedStudyCollectionIds = new Set([STUDY_ALL_COLLECTION_ID]);
 const selectedFlashcardIds = new Set();
 
 const elements = {
@@ -69,8 +71,10 @@ const elements = {
     collectionCardsEditor: document.getElementById("collection-cards-editor"),
 
     studySetupForm: document.getElementById("study-setup-form"),
-    studyCollection: document.getElementById("study-collection"),
+    studyCollectionSummary: document.getElementById("study-collection-summary"),
+    studyCollectionOptions: document.getElementById("study-collection-options"),
     studyMode: document.getElementById("study-mode"),
+    studyCardLimit: document.getElementById("study-card-limit"),
     studySetupMessage: document.getElementById("study-setup-message"),
     studySessionBox: document.getElementById("study-session"),
     studyResultsBox: document.getElementById("study-results"),
@@ -118,6 +122,7 @@ function bindEvents() {
     elements.collectionFlashcardForm.addEventListener("submit", onCollectionFlashcardSubmit);
 
     elements.studySetupForm.addEventListener("submit", onStudySetupSubmit);
+    elements.studyCollectionOptions.addEventListener("change", onStudyCollectionOptionsChange);
     elements.studyAnswerForm.addEventListener("submit", onStudyAnswerSubmit);
     elements.studyGermanCharacters.addEventListener("click", onStudyGermanCharacterClick);
     elements.studyNextButton.addEventListener("click", onStudyNext);
@@ -300,32 +305,32 @@ async function onCollectionFlashcardSubmit(event) {
 function onStudySetupSubmit(event) {
     event.preventDefault();
 
-    const collectionId = elements.studyCollection.value;
     const mode = elements.studyMode.value;
-    const collection = state.collections.find((item) => item.id === collectionId);
+    const cardLimit = parseStudyCardLimit(elements.studyCardLimit.value);
 
-    if (!collection) {
-        showStudySetupMessage("Choose a collection first.");
+    if (Number.isNaN(cardLimit)) {
+        showStudySetupMessage("Enter a whole number greater than 0 for the card limit, or leave it blank.");
         return;
     }
 
-    let cards = state.flashcards.filter((card) => collection.cardIds.includes(card.id));
+    let cards = getStudyCardsForSelection();
 
     if (mode === "image-de") {
         cards = cards.filter((card) => card.imageData);
     }
 
     if (cards.length === 0) {
-        showStudySetupMessage(
-            mode === "image-de"
-                ? "This collection has no flashcards with images."
-                : "This collection has no flashcards.",
-        );
+        showStudySetupMessage(getStudySelectionEmptyMessage(mode === "image-de"));
         return;
     }
 
     showStudySetupMessage("");
     studySession = createStudySession(cards, mode);
+
+    if (cardLimit && cardLimit < studySession.cards.length) {
+        studySession.cards = studySession.cards.slice(0, cardLimit);
+    }
+
     elements.studyResultsBox.classList.add("hidden");
     elements.studySessionBox.classList.remove("hidden");
     renderStudyQuestion();
@@ -731,22 +736,38 @@ function renderCollectionEditor() {
 }
 
 function renderStudySetup() {
-    elements.studyCollection.innerHTML = "";
+    sanitizeStudyCollectionSelection();
+    elements.studyCollectionOptions.innerHTML = "";
 
-    if (state.collections.length === 0) {
-        const option = document.createElement("option");
-        option.value = "";
-        option.textContent = "No collections available";
-        elements.studyCollection.appendChild(option);
-        return;
-    }
+    elements.studyCollectionOptions.appendChild(
+        createStudyCollectionOption({
+            id: STUDY_ALL_COLLECTION_ID,
+            label: "All flashcards",
+            count: state.flashcards.length,
+            checked: selectedStudyCollectionIds.has(STUDY_ALL_COLLECTION_ID),
+            note: "Includes every flashcard, even if it is not in a collection.",
+        }),
+    );
 
     state.collections.forEach((collection) => {
-        const option = document.createElement("option");
-        option.value = collection.id;
-        option.textContent = collection.name;
-        elements.studyCollection.appendChild(option);
+        elements.studyCollectionOptions.appendChild(
+            createStudyCollectionOption({
+                id: collection.id,
+                label: collection.name,
+                count: collection.cardIds.length,
+                checked: selectedStudyCollectionIds.has(collection.id),
+            }),
+        );
     });
+
+    if (state.collections.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "multiselect-empty muted";
+        empty.textContent = "No saved collections yet. “All flashcards” will still study every card you have.";
+        elements.studyCollectionOptions.appendChild(empty);
+    }
+
+    elements.studyCollectionSummary.textContent = getStudyCollectionSummaryText();
 }
 
 function renderStudyQuestion() {
@@ -761,7 +782,7 @@ function renderStudyQuestion() {
     elements.studyFeedbackNote.textContent = "";
     elements.studyFeedback.className = "study-feedback";
     elements.studyNextButton.classList.add("hidden");
-    elements.studyGermanCharacters.classList.toggle("hidden", !isGermanAnswerMode(studySession.mode));
+    elements.studyGermanCharacters.classList.toggle("hidden", !prompt.expectsGermanAnswer);
 
     if (prompt.imageData) {
         elements.studyImage.src = prompt.imageData;
@@ -779,6 +800,152 @@ function showStudyResults() {
     const total = studySession?.cards.length || 0;
     const score = studySession?.score || 0;
     elements.studyResultText.textContent = `You scored ${formatStudyScore(score)} out of ${formatStudyScore(total)}.`;
+}
+
+function onStudyCollectionOptionsChange(event) {
+    const checkbox = event.target.closest('input[type="checkbox"][data-study-collection-id]');
+
+    if (!checkbox) {
+        return;
+    }
+
+    const collectionId = checkbox.dataset.studyCollectionId || "";
+
+    if (collectionId === STUDY_ALL_COLLECTION_ID) {
+        selectedStudyCollectionIds = new Set([STUDY_ALL_COLLECTION_ID]);
+        renderStudySetup();
+        return;
+    }
+
+    selectedStudyCollectionIds.delete(STUDY_ALL_COLLECTION_ID);
+
+    if (checkbox.checked) {
+        selectedStudyCollectionIds.add(collectionId);
+    } else {
+        selectedStudyCollectionIds.delete(collectionId);
+    }
+
+    if (selectedStudyCollectionIds.size === 0) {
+        selectedStudyCollectionIds = new Set([STUDY_ALL_COLLECTION_ID]);
+    }
+
+    renderStudySetup();
+}
+
+function createStudyCollectionOption({ id, label, count, checked, note = "" }) {
+    const option = document.createElement("label");
+    option.className = "multiselect-option";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = checked;
+    checkbox.dataset.studyCollectionId = id;
+
+    const text = document.createElement("div");
+    text.className = "multiselect-option-text";
+
+    const title = document.createElement("div");
+    title.className = "multiselect-option-title";
+    title.textContent = label;
+
+    const meta = document.createElement("div");
+    meta.className = "item-subtitle";
+    meta.textContent = note ? `${count} card(s) · ${note}` : `${count} card(s)`;
+
+    text.append(title, meta);
+    option.append(checkbox, text);
+
+    return option;
+}
+
+function sanitizeStudyCollectionSelection() {
+    const validCollectionIds = new Set(state.collections.map((collection) => collection.id));
+    const nextSelectedIds = [...selectedStudyCollectionIds].filter(
+        (id) => id === STUDY_ALL_COLLECTION_ID || validCollectionIds.has(id),
+    );
+
+    if (nextSelectedIds.length === 0 || nextSelectedIds.includes(STUDY_ALL_COLLECTION_ID)) {
+        selectedStudyCollectionIds = new Set([STUDY_ALL_COLLECTION_ID]);
+        return;
+    }
+
+    selectedStudyCollectionIds = new Set(nextSelectedIds);
+}
+
+function getStudyCollectionSummaryText() {
+    const cards = getStudyCardsForSelection();
+
+    if (selectedStudyCollectionIds.has(STUDY_ALL_COLLECTION_ID)) {
+        return `All flashcards (${cards.length} card${cards.length === 1 ? "" : "s"})`;
+    }
+
+    const selectedCollections = state.collections.filter((collection) =>
+        selectedStudyCollectionIds.has(collection.id),
+    );
+
+    if (selectedCollections.length === 1) {
+        return `${selectedCollections[0].name} (${cards.length} card${cards.length === 1 ? "" : "s"})`;
+    }
+
+    return `${selectedCollections.length} collections selected (${cards.length} cards)`;
+}
+
+function getStudyCardsForSelection() {
+    sanitizeStudyCollectionSelection();
+
+    if (selectedStudyCollectionIds.has(STUDY_ALL_COLLECTION_ID)) {
+        return [...state.flashcards];
+    }
+
+    const cardIds = new Set();
+
+    state.collections.forEach((collection) => {
+        if (!selectedStudyCollectionIds.has(collection.id)) {
+            return;
+        }
+
+        collection.cardIds.forEach((cardId) => cardIds.add(cardId));
+    });
+
+    return state.flashcards.filter((card) => cardIds.has(card.id));
+}
+
+function getStudySelectionEmptyMessage(needsImages) {
+    if (selectedStudyCollectionIds.has(STUDY_ALL_COLLECTION_ID)) {
+        return needsImages
+            ? "You do not have any flashcards with images yet."
+            : "You do not have any flashcards to study yet.";
+    }
+
+    const selectedCollections = state.collections.filter((collection) =>
+        selectedStudyCollectionIds.has(collection.id),
+    );
+
+    if (selectedCollections.length === 1) {
+        return needsImages
+            ? `Collection “${selectedCollections[0].name}” has no flashcards with images.`
+            : `Collection “${selectedCollections[0].name}” has no flashcards to study.`;
+    }
+
+    return needsImages
+        ? "The selected collections have no flashcards with images."
+        : "The selected collections have no flashcards to study.";
+}
+
+function parseStudyCardLimit(value) {
+    const normalized = String(value || "").trim();
+
+    if (!normalized) {
+        return null;
+    }
+
+    const parsed = Number.parseInt(normalized, 10);
+
+    if (!Number.isInteger(parsed) || parsed < 1) {
+        return Number.NaN;
+    }
+
+    return parsed;
 }
 
 function onStudyGermanCharacterClick(event) {

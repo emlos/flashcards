@@ -170,17 +170,25 @@
         <div class="card form-card">
           <h3>Start Session</h3>
           <form id="study-setup-form" class="stack-form">
-            <label>
-              Collection
-              <select id="study-collection" required></select>
-            </label>
+            <div class="stack-field">
+              <span>Collections</span>
+              <details id="study-collection-picker" class="multiselect">
+                <summary id="study-collection-summary" class="multiselect-summary">All flashcards</summary>
+                <div id="study-collection-options" class="multiselect-options"></div>
+              </details>
+            </div>
             <label>
               Mode
               <select id="study-mode" required>
                 <option value="de-en">German → English</option>
                 <option value="en-de">English → German</option>
                 <option value="image-de">Image → German</option>
+                <option value="random">Random mix</option>
               </select>
+            </label>
+            <label>
+              Maximum cards (optional)
+              <input type="number" id="study-card-limit" min="1" step="1" placeholder="All available cards" />
             </label>
             <button type="submit">Start study session</button>
           </form>

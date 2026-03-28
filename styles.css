@@ -194,6 +194,7 @@ pre {
 }
 
 .stack-form label,
+.stack-field,
 .inline-form label {
   display: grid;
   gap: 0.35rem;
@@ -418,6 +419,69 @@ pre {
 
 .hidden {
   display: none !important;
+}
+
+.multiselect {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: white;
+}
+
+.multiselect-summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 0.65rem 0.75rem;
+}
+
+.multiselect-summary::-webkit-details-marker {
+  display: none;
+}
+
+.multiselect-summary::after {
+  content: "▾";
+  float: right;
+  color: var(--muted);
+}
+
+.multiselect[open] .multiselect-summary::after {
+  content: "▴";
+}
+
+.multiselect-options {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.multiselect-option {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+  background: var(--panel-alt);
+}
+
+.multiselect-option input {
+  width: auto;
+  margin-top: 0.2rem;
+}
+
+.multiselect-option-text {
+  flex: 1;
+}
+
+.multiselect-option-title {
+  font-weight: bold;
+  margin-bottom: 0.2rem;
+}
+
+.multiselect-empty {
+  padding: 0.25rem 0;
 }
 
 .study-prompt {
