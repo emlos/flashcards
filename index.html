@@ -41,8 +41,8 @@
               <input type="text" id="flashcard-german" required />
             </label>
             <label>
-              English
-              <input type="text" id="flashcard-english" required />
+              English meaning(s)
+              <input type="text" id="flashcard-english" placeholder="dog; hound" required />
             </label>
             <label>
               Optional image
@@ -167,7 +167,8 @@
         <div class="grid-two">
           <div class="card">
             <h3>Bulk Import Words</h3>
-            <p>TXT format: <code>German | English</code> or <code>German | English | Collection A, Collection B</code>
+            <p>TXT format: <code>German | English1; English2</code> or
+              <code>German | English1; English2 | Collection A, Collection B</code></p>
             </p>
             <input type="file" id="bulk-import-file" accept=".txt" />
             <button id="bulk-import-button" type="button">Import words</button>
@@ -189,13 +190,13 @@
 
         <div class="card">
           <strong>Bulk word import:</strong>
-          <pre>Haus | house
-Baum | tree | Nature
-Apfel | apple | Food, Basics</pre>
+          <pre>der Hund | dog; hound | Animals
+die Katze | cat | Animals
+das Buch | book | Basics, School</pre>
 
           <strong>Full backup export/import:</strong>
-          <pre>CARD	card-id	encodedGerman	encodedEnglish	encodedImageData
-COLLECTION	collection-id	encodedName	cardId1,cardId2,cardId3</pre>
+         <pre>CARD\tcard-id\tencodedGerman\tencodedEnglishAnswersJson\tencodedImageData
+COLLECTION\tcollection-id\tencodedName\tcardId1,cardId2,cardId3</pre>
         </div>
   </div>
 

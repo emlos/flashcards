@@ -41,10 +41,11 @@ One flashcard per line.
 
 Supported formats:
 ```text
-Haus | house
-Baum | tree | Nature
-Apfel | apple | Food, Basics
+der Hund | dog; hound | Animals
+die Katze | cat | Animals
+das Buch | book | Basics, School
 ```
+The English field supports one or more meanings separated by semicolons.
 The third field is optional. If present, it is a comma-separated list of collection names. Missing collections are created automatically during import.
 Blank lines are ignored. Lines starting with `#` are treated as comments.
 

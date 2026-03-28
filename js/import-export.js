@@ -6,9 +6,44 @@ function decodeField(value) {
     return decodeURIComponent(value ?? "");
 }
 
+function parseEnglishAnswersField(value) {
+    return [
+        ...new Set(
+            String(value || "")
+                .split(";")
+                .map((item) => item.trim())
+                .filter(Boolean),
+        ),
+    ];
+}
+
+function parseBackupEnglishAnswers(value) {
+    const decoded = String(value || "").trim();
+
+    if (!decoded) {
+        return [];
+    }
+
+    try {
+        const parsed = JSON.parse(decoded);
+
+        if (Array.isArray(parsed)) {
+            return [...new Set(parsed.map((item) => String(item || "").trim()).filter(Boolean))];
+        }
+
+        if (typeof parsed === "string") {
+            return parseEnglishAnswersField(parsed);
+        }
+    } catch (error) {
+        return parseEnglishAnswersField(decoded);
+    }
+
+    return [];
+}
+
 export function parseBulkWords(text) {
     const lines = text
-        .split(/\r?\n/)
+        .split(/\\r?\\n/)
         .map((line) => line.trim())
         .filter(Boolean);
 
@@ -23,14 +58,17 @@ export function parseBulkWords(text) {
 
         if (parts.length !== 2 && parts.length !== 3) {
             throw new Error(
-                `Invalid line: "${line}". Expected format: German | English or German | English | Collection A, Collection B`,
+                `Invalid line: "${line}". Expected format: German | English or German | English1; English2 | Collection A, Collection B`,
             );
         }
 
-        const [german, english, collectionsPart = ""] = parts;
+        const [german, englishPart, collectionsPart = ""] = parts;
+        const englishAnswers = parseEnglishAnswersField(englishPart);
 
-        if (!german || !english) {
-            throw new Error(`Invalid line: "${line}". Both German and English must be filled.`);
+        if (!german || englishAnswers.length === 0) {
+            throw new Error(
+                `Invalid line: "${line}". German and at least one English meaning are required.`,
+            );
         }
 
         const collectionNames = collectionsPart
@@ -42,7 +80,7 @@ export function parseBulkWords(text) {
             card: {
                 id: crypto.randomUUID(),
                 german,
-                english,
+                englishAnswers,
                 imageData: "",
             },
             collectionNames: [...new Set(collectionNames)],
@@ -51,6 +89,7 @@ export function parseBulkWords(text) {
 
     return entries;
 }
+
 export function exportBackupText(state) {
     const lines = [];
 
@@ -60,9 +99,9 @@ export function exportBackupText(state) {
                 "CARD",
                 card.id,
                 encodeField(card.german),
-                encodeField(card.english),
+                encodeField(JSON.stringify(card.englishAnswers || [])),
                 encodeField(card.imageData || ""),
-            ].join("\t"),
+            ].join("\\t"),
         );
     }
 
@@ -73,16 +112,16 @@ export function exportBackupText(state) {
                 collection.id,
                 encodeField(collection.name),
                 Array.isArray(collection.cardIds) ? collection.cardIds.join(",") : "",
-            ].join("\t"),
+            ].join("\\t"),
         );
     }
 
-    return lines.join("\n");
+    return lines.join("\\n");
 }
 
 export function parseBackupText(text) {
     const lines = text
-        .split(/\r?\n/)
+        .split(/\\r?\\n/)
         .map((line) => line.trim())
         .filter(Boolean);
 
@@ -90,7 +129,7 @@ export function parseBackupText(text) {
     const collections = [];
 
     for (const line of lines) {
-        const parts = line.split("\t");
+        const parts = line.split("\\t");
         const type = parts[0];
 
         if (type === "CARD") {
@@ -101,7 +140,7 @@ export function parseBackupText(text) {
             flashcards.push({
                 id: parts[1],
                 german: decodeField(parts[2]),
-                english: decodeField(parts[3]),
+                englishAnswers: parseBackupEnglishAnswers(decodeField(parts[3])),
                 imageData: decodeField(parts[4]),
             });
         } else if (type === "COLLECTION") {

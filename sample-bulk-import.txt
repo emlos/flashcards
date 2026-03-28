@@ -1,9 +1,112 @@
-# Supported:
-# German | English
-# German | English | Collection A, Collection B
+# 100 beginner German words/phrases
+# Format: German | English | Collection A, Collection B
 
-Haus | house | Basics, Home
-Baum | tree | Nature
-Apfel | apple | Food, Basics
-Buch | book | Basics, School
-Wasser | water | Basics, Food
+hallo | hello | Beginner 100, Greetings
+guten Morgen | good morning | Beginner 100, Greetings
+guten Abend | good evening | Beginner 100, Greetings
+tschüss | bye; goodbye | Beginner 100, Greetings
+bitte | please; you’re welcome | Beginner 100, Greetings
+danke | thanks; thank you | Beginner 100, Greetings
+ja | yes | Beginner 100, Basics
+nein | no | Beginner 100, Basics
+entschuldigung | excuse me; sorry | Beginner 100, Greetings
+wie geht’s? | how are you? | Beginner 100, Greetings
+
+ich | I | Beginner 100, Basics
+du | you | Beginner 100, Basics
+er | he | Beginner 100, Basics
+sie | she | Beginner 100, Basics
+wir | we | Beginner 100, Basics
+ihr | you all | Beginner 100, Basics
+sie | they | Beginner 100, Basics
+mein | my | Beginner 100, Basics
+dein | your | Beginner 100, Basics
+was? | what? | Beginner 100, Questions
+
+eins | one | Beginner 100, Numbers
+zwei | two | Beginner 100, Numbers
+drei | three | Beginner 100, Numbers
+vier | four | Beginner 100, Numbers
+fünf | five | Beginner 100, Numbers
+sechs | six | Beginner 100, Numbers
+sieben | seven | Beginner 100, Numbers
+acht | eight | Beginner 100, Numbers
+neun | nine | Beginner 100, Numbers
+zehn | ten | Beginner 100, Numbers
+
+heute | today | Beginner 100, Time
+morgen | tomorrow; morning | Beginner 100, Time
+gestern | yesterday | Beginner 100, Time
+Montag | Monday | Beginner 100, Time
+Dienstag | Tuesday | Beginner 100, Time
+Mittwoch | Wednesday | Beginner 100, Time
+Donnerstag | Thursday | Beginner 100, Time
+Freitag | Friday | Beginner 100, Time
+Samstag | Saturday | Beginner 100, Time
+Sonntag | Sunday | Beginner 100, Time
+
+die Mutter | mother | Beginner 100, Family
+der Vater | father | Beginner 100, Family
+die Eltern | parents | Beginner 100, Family
+der Bruder | brother | Beginner 100, Family
+die Schwester | sister | Beginner 100, Family
+das Kind | child | Beginner 100, Family
+der Freund | friend; boyfriend | Beginner 100, Family
+die Freundin | friend; girlfriend | Beginner 100, Family
+die Familie | family | Beginner 100, Family
+der Mensch | person; human | Beginner 100, Family
+
+das Haus | house | Beginner 100, Home
+die Wohnung | apartment; flat | Beginner 100, Home
+das Zimmer | room | Beginner 100, Home
+die Tür | door | Beginner 100, Home
+das Fenster | window | Beginner 100, Home
+der Tisch | table | Beginner 100, Home
+der Stuhl | chair | Beginner 100, Home
+das Bett | bed | Beginner 100, Home
+das Buch | book | Beginner 100, Home
+der Schlüssel | key | Beginner 100, Home
+
+das Wasser | water | Beginner 100, Food
+das Brot | bread | Beginner 100, Food
+die Milch | milk | Beginner 100, Food
+der Kaffee | coffee | Beginner 100, Food
+der Tee | tea | Beginner 100, Food
+der Apfel | apple | Beginner 100, Food
+die Banane | banana | Beginner 100, Food
+der Reis | rice | Beginner 100, Food
+das Ei | egg | Beginner 100, Food
+der Käse | cheese | Beginner 100, Food
+
+der Hund | dog; hound | Beginner 100, Animals
+die Katze | cat | Beginner 100, Animals
+der Vogel | bird | Beginner 100, Animals
+der Fisch | fish | Beginner 100, Animals
+das Pferd | horse | Beginner 100, Animals
+die Kuh | cow | Beginner 100, Animals
+der Baum | tree | Beginner 100, Nature
+die Blume | flower | Beginner 100, Nature
+die Sonne | sun | Beginner 100, Nature
+der Regen | rain | Beginner 100, Nature
+
+sein | to be | Beginner 100, Verbs
+haben | to have | Beginner 100, Verbs
+gehen | to go; walk | Beginner 100, Verbs
+kommen | to come | Beginner 100, Verbs
+machen | to do; make | Beginner 100, Verbs
+sehen | to see | Beginner 100, Verbs
+essen | to eat | Beginner 100, Verbs
+trinken | to drink | Beginner 100, Verbs
+lernen | to learn | Beginner 100, Verbs
+sprechen | to speak | Beginner 100, Verbs
+
+gut | good | Beginner 100, Adjectives
+schlecht | bad | Beginner 100, Adjectives
+groß | big; tall | Beginner 100, Adjectives
+klein | small | Beginner 100, Adjectives
+schnell | fast; quick | Beginner 100, Adjectives
+langsam | slow | Beginner 100, Adjectives
+rot | red | Beginner 100, Colors
+blau | blue | Beginner 100, Colors
+grün | green | Beginner 100, Colors
+schwarz | black | Beginner 100, Colors

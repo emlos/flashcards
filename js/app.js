@@ -95,21 +95,38 @@ async function onFlashcardSubmit(event) {
     event.preventDefault();
 
     const german = elements.flashcardGerman.value.trim();
-    const english = elements.flashcardEnglish.value.trim();
+    const englishAnswers = parseEnglishAnswersInput(elements.flashcardEnglish.value);
     const imageFile = elements.flashcardImage.files[0];
 
-    if (!german || !english) {
+    if (!german || englishAnswers.length === 0) {
         return;
     }
 
     const imageData = imageFile ? await fileToDataUrl(imageFile) : "";
+    const existingCard = findExistingFlashcardByGerman(german);
 
-    state.flashcards.push({
-        id: crypto.randomUUID(),
-        german,
-        english,
-        imageData,
-    });
+    if (existingCard) {
+        const { merged, added } = mergeEnglishAnswers(existingCard.englishAnswers, englishAnswers);
+
+        existingCard.englishAnswers = merged;
+
+        if (imageData && !existingCard.imageData) {
+            existingCard.imageData = imageData;
+        }
+
+        console.info(
+            `[Manual add] Reused existing card "${existingCard.german}". Added meanings: ${
+                added.length > 0 ? added.join(", ") : "none"
+            }.`,
+        );
+    } else {
+        state.flashcards.push({
+            id: crypto.randomUUID(),
+            german,
+            englishAnswers,
+            imageData,
+        });
+    }
 
     persist();
     elements.flashcardForm.reset();
@@ -178,10 +195,9 @@ function onStudyAnswerSubmit(event) {
         return;
     }
 
-    const card = getCurrentCard(studySession);
-    const prompt = buildPrompt(card, studySession.mode);
+    const prompt = studySession.currentPrompt;
     const answer = elements.studyAnswer.value;
-    const isCorrect = checkAnswer(answer, prompt.correctAnswer);
+    const isCorrect = checkAnswer(answer, prompt.correctAnswers);
 
     studySession.answered = true;
     if (isCorrect) {
@@ -190,7 +206,8 @@ function onStudyAnswerSubmit(event) {
 
     elements.studyFeedback.textContent = isCorrect
         ? "Correct."
-        : `Incorrect. Correct answer: ${prompt.correctAnswer}`;
+        : `Incorrect. Correct answer: ${prompt.correctAnswers.join(" / ")}`;
+
     elements.studyFeedback.className = `study-feedback ${isCorrect ? "correct" : "incorrect"}`;
     elements.studyNextButton.classList.remove("hidden");
     elements.studyAnswer.disabled = true;
@@ -252,7 +269,8 @@ async function onBulkImport() {
 
         for (const entry of importedEntries) {
             let card = findExistingFlashcardByGerman(entry.card.german);
-            let isDuplicate = Boolean(card);
+            const isDuplicate = Boolean(card);
+            let addedMeanings = [];
 
             if (!card) {
                 card = entry.card;
@@ -260,6 +278,14 @@ async function onBulkImport() {
                 createdCardsCount += 1;
             } else {
                 reusedCardsCount += 1;
+
+                const mergeResult = mergeEnglishAnswers(
+                    card.englishAnswers,
+                    entry.card.englishAnswers,
+                );
+
+                card.englishAnswers = mergeResult.merged;
+                addedMeanings = mergeResult.added;
             }
 
             const addedToCollections = [];
@@ -285,6 +311,7 @@ async function onBulkImport() {
                 duplicateLogs.push({
                     german: entry.card.german,
                     reusedId: card.id,
+                    addedMeanings,
                     addedToCollections,
                 });
             }
@@ -296,13 +323,10 @@ async function onBulkImport() {
             );
 
             duplicateLogs.forEach((item) => {
-                const extra =
-                    item.addedToCollections.length > 0
-                        ? ` Added to collections: ${item.addedToCollections.join(", ")}`
-                        : " No new collection links were needed.";
-
                 console.info(
-                    `Duplicate word reused: "${item.german}" (card id: ${item.reusedId}).${extra}`,
+                    `Duplicate word reused: "${item.german}" (card id: ${item.reusedId}). ` +
+                        `Added meanings: ${item.addedMeanings.length > 0 ? item.addedMeanings.join(", ") : "none"}. ` +
+                        `Added to collections: ${item.addedToCollections.length > 0 ? item.addedToCollections.join(", ") : "none"}.`,
                 );
             });
 
@@ -369,7 +393,7 @@ function renderFlashcards() {
         const main = document.createElement("div");
         main.className = "item-row-main";
         main.innerHTML = `
-      <div class="item-title">${escapeHtml(card.german)} — ${escapeHtml(card.english)}</div>
+      <div class="item-title">${escapeHtml(card.german)} — ${escapeHtml(card.englishAnswers.join(", "))}</div>
       <div class="item-subtitle">ID: ${escapeHtml(card.id)}</div>
       <div class="item-tags">${card.imageData ? "Has image card" : "No image"}</div>
     `;
@@ -470,7 +494,7 @@ function renderCollectionEditor() {
 
         const text = document.createElement("div");
         text.innerHTML = `
-      <div class="item-title">${escapeHtml(card.german)} — ${escapeHtml(card.english)}</div>
+      <div class="item-title">${escapeHtml(card.german)} — ${escapeHtml(card.englishAnswers.join(", "))}</div>
       <div class="item-subtitle">${card.imageData ? "Has image" : "No image"}</div>
     `;
 
@@ -506,6 +530,8 @@ function renderStudyQuestion() {
     const card = getCurrentCard(studySession);
     const prompt = buildPrompt(card, studySession.mode);
 
+    studySession.currentPrompt = prompt;
+
     elements.studyProgress.textContent = `${studySession.currentIndex + 1} / ${studySession.cards.length}`;
     elements.studyPrompt.textContent = prompt.promptText;
     elements.studyAnswerForm.reset();
@@ -523,7 +549,6 @@ function renderStudyQuestion() {
         elements.studyImageWrapper.classList.add("hidden");
     }
 }
-
 function showStudyResults() {
     elements.studySessionBox.classList.add("hidden");
     elements.studyResultsBox.classList.remove("hidden");
@@ -620,6 +645,38 @@ function normalizeWord(value) {
     return String(value || "")
         .trim()
         .toLocaleLowerCase();
+}
+
+function parseEnglishAnswersInput(value) {
+    return [
+        ...new Set(
+            String(value || "")
+                .split(";")
+                .map((item) => item.trim())
+                .filter(Boolean),
+        ),
+    ];
+}
+
+function mergeEnglishAnswers(existingAnswers, incomingAnswers) {
+    const merged = [...(existingAnswers || [])];
+    const existingNormalized = new Set(merged.map((item) => normalizeWord(item)));
+
+    const added = [];
+
+    for (const answer of incomingAnswers || []) {
+        const normalized = normalizeWord(answer);
+
+        if (!normalized || existingNormalized.has(normalized)) {
+            continue;
+        }
+
+        merged.push(answer.trim());
+        existingNormalized.add(normalized);
+        added.push(answer.trim());
+    }
+
+    return { merged, added };
 }
 
 function findExistingFlashcardByGerman(german) {
