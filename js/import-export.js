@@ -43,7 +43,7 @@ function parseBackupEnglishAnswers(value) {
 
 export function parseBulkWords(text) {
     const lines = text
-        .split(/\\r?\\n/)
+        .split(/\r?\n/)
         .map((line) => line.trim())
         .filter(Boolean);
 
@@ -121,7 +121,7 @@ export function exportBackupText(state) {
 
 export function parseBackupText(text) {
     const lines = text
-        .split(/\\r?\\n/)
+        .split(/\r?\n/)
         .map((line) => line.trim())
         .filter(Boolean);
 
