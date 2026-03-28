@@ -523,10 +523,24 @@ pre {
     padding: 0.25rem 0;
 }
 
+.study-prompt-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
 .study-prompt {
     font-size: 1.35rem;
     font-weight: bold;
-    margin-bottom: 1rem;
+    margin: 0;
+}
+
+.pronunciation-button {
+    min-width: 3rem;
+    padding: 0.5rem 0.75rem;
+    white-space: nowrap;
 }
 
 .study-image-wrapper {
@@ -563,6 +577,14 @@ pre {
     min-height: 1.5rem;
     margin: 0.35rem 0 0;
     line-height: 1.45;
+}
+
+.study-feedback-audio {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
 }
 
 .study-character-tools {
@@ -633,7 +655,8 @@ pre {
     }
 
     .inline-form,
-    .toolbar {
+    .toolbar,
+    .study-prompt-row {
         flex-direction: column;
         align-items: stretch;
     }

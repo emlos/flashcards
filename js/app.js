@@ -20,6 +20,7 @@ import {
 } from "./study-mode.js";
 
 const STUDY_ALL_COLLECTION_ID = "__all__";
+const GERMAN_SPEECH_LANGUAGE = "de-DE";
 
 const DEFAULT_COLLECTION_COLORS = [
     "#4f46e5",
@@ -61,6 +62,7 @@ let flashcardRenderDebounceId = 0;
 let collectionEditorRenderDebounceId = 0;
 let pendingBackupImportResolver = null;
 let lastFocusedElementBeforeBackupImportModal = null;
+let hasBoundSpeechSynthesisEvents = false;
 
 const elements = {
     appStatusMessage: document.getElementById("app-status-message"),
@@ -109,6 +111,7 @@ const elements = {
     studyResultsBox: document.getElementById("study-results"),
     studyProgress: document.getElementById("study-progress"),
     studyPrompt: document.getElementById("study-prompt"),
+    studyPromptAudioButton: document.getElementById("study-prompt-audio-button"),
     studyImageWrapper: document.getElementById("study-image-wrapper"),
     studyImage: document.getElementById("study-image"),
     studyAnswerForm: document.getElementById("study-answer-form"),
@@ -117,6 +120,8 @@ const elements = {
     studyGermanCharacters: document.getElementById("study-german-characters"),
     studyFeedback: document.getElementById("study-feedback"),
     studyFeedbackNote: document.getElementById("study-feedback-note"),
+    studyFeedbackAudioRow: document.getElementById("study-feedback-audio-row"),
+    studyFeedbackAudioButton: document.getElementById("study-feedback-audio-button"),
     studyNextButton: document.getElementById("study-next-button"),
     studyEndButton: document.getElementById("study-end-button"),
     studyResultText: document.getElementById("study-result-text"),
@@ -187,6 +192,8 @@ function replaceAppState(nextState) {
 }
 
 function onAppPageHide(event) {
+    cancelSpeechPlayback();
+
     if (!event.persisted) {
         releaseStateImageObjectUrls(state);
     }
@@ -215,6 +222,8 @@ function bindEvents() {
     elements.studyCardLimit.addEventListener("input", onStudyPreferencesChange);
     elements.studyAnswerForm.addEventListener("submit", onStudyAnswerSubmit);
     elements.studyGermanCharacters.addEventListener("click", onStudyGermanCharacterClick);
+    elements.studyPromptAudioButton.addEventListener("click", onStudyPronunciationButtonClick);
+    elements.studyFeedbackAudioButton.addEventListener("click", onStudyPronunciationButtonClick);
     elements.studyNextButton.addEventListener("click", onStudyNext);
     elements.studyEndButton.addEventListener("click", endStudySession);
     elements.backupImportMergeButton.addEventListener("click", () =>
@@ -232,6 +241,7 @@ function bindEvents() {
     elements.backupImportButton.addEventListener("click", onBackupImport);
     elements.exportButton.addEventListener("click", onExport);
     elements.deleteAllButton.addEventListener("click", onDeleteAll);
+    bindSpeechSynthesisEvents();
     window.addEventListener("pagehide", onAppPageHide);
 }
 
@@ -619,6 +629,7 @@ async function onStudyAnswerSubmit(event) {
     elements.studyCheckButton.disabled = true;
     elements.studyAnswerForm.classList.add("study-answer-form-complete");
     elements.studyNextButton.classList.remove("hidden");
+    renderStudyPronunciationControls();
     elements.studyNextButton.focus();
 
     await persist();
@@ -630,6 +641,7 @@ function onStudyNext() {
         return;
     }
 
+    cancelSpeechPlayback();
     advanceSession(studySession);
 
     if (isSessionFinished(studySession)) {
@@ -650,6 +662,7 @@ function endStudySession() {
 }
 
 function resetStudyView() {
+    cancelSpeechPlayback();
     studySession = null;
     elements.studySessionBox.classList.add("hidden");
     elements.studyResultsBox.classList.add("hidden");
@@ -663,6 +676,12 @@ function resetStudyView() {
     elements.studyNextButton.classList.add("hidden");
     elements.studyImageWrapper.classList.add("hidden");
     elements.studyGermanCharacters.classList.add("hidden");
+    elements.studyPromptAudioButton.classList.add("hidden");
+    elements.studyPromptAudioButton.disabled = false;
+    elements.studyPromptAudioButton.removeAttribute("data-german-word");
+    elements.studyFeedbackAudioRow.classList.add("hidden");
+    elements.studyFeedbackAudioButton.disabled = false;
+    elements.studyFeedbackAudioButton.removeAttribute("data-german-word");
 }
 
 async function onBulkImport() {
@@ -1239,6 +1258,7 @@ function renderCardStats() {
 function renderStudyQuestion() {
     const prompt = getCurrentPrompt(studySession);
 
+    cancelSpeechPlayback();
     elements.studyProgress.textContent = `${studySession.currentIndex + 1} / ${studySession.cards.length}`;
     elements.studyPrompt.textContent = prompt.promptText;
     elements.studyAnswerForm.reset();
@@ -1251,6 +1271,7 @@ function renderStudyQuestion() {
     elements.studyFeedback.className = "study-feedback";
     elements.studyNextButton.classList.add("hidden");
     elements.studyGermanCharacters.classList.toggle("hidden", !prompt.expectsGermanAnswer);
+    renderStudyPronunciationControls();
 
     if (prompt.imageData) {
         elements.studyImage.src = prompt.imageData;
@@ -1262,6 +1283,7 @@ function renderStudyQuestion() {
 }
 
 function showStudyResults() {
+    cancelSpeechPlayback();
     finalizeStudySession();
     elements.studySessionBox.classList.add("hidden");
     elements.studyResultsBox.classList.remove("hidden");
@@ -1272,6 +1294,133 @@ function showStudyResults() {
     const completionNote =
         answeredCount < total ? ` You answered ${answeredCount} of ${total} card(s).` : "";
     elements.studyResultText.textContent = `You scored ${formatStudyScore(score)} out of ${formatStudyScore(total)}.${completionNote}`;
+}
+
+function onStudyPronunciationButtonClick(event) {
+    const germanWord = event.currentTarget?.dataset.germanWord || "";
+    playGermanPronunciation(germanWord);
+}
+
+function bindSpeechSynthesisEvents() {
+    if (hasBoundSpeechSynthesisEvents) {
+        return;
+    }
+
+    const speechSynthesisApi = getSpeechSynthesisApi();
+
+    if (!speechSynthesisApi || typeof speechSynthesisApi.addEventListener !== "function") {
+        return;
+    }
+
+    speechSynthesisApi.addEventListener("voiceschanged", renderStudyPronunciationControls);
+    hasBoundSpeechSynthesisEvents = true;
+}
+
+function getSpeechSynthesisApi() {
+    if (
+        typeof window === "undefined" ||
+        typeof window.speechSynthesis === "undefined" ||
+        typeof window.SpeechSynthesisUtterance !== "function"
+    ) {
+        return null;
+    }
+
+    return window.speechSynthesis;
+}
+
+function getPreferredGermanVoice() {
+    const speechSynthesisApi = getSpeechSynthesisApi();
+
+    if (!speechSynthesisApi || typeof speechSynthesisApi.getVoices !== "function") {
+        return null;
+    }
+
+    const voices = speechSynthesisApi.getVoices();
+
+    return (
+        voices.find((voice) => String(voice?.lang || "").toLowerCase() === GERMAN_SPEECH_LANGUAGE.toLowerCase()) ||
+        voices.find((voice) => String(voice?.lang || "").toLowerCase().startsWith("de")) ||
+        null
+    );
+}
+
+function playGermanPronunciation(germanWord) {
+    const text = String(germanWord || "").trim();
+
+    if (!text) {
+        return;
+    }
+
+    const speechSynthesisApi = getSpeechSynthesisApi();
+
+    if (!speechSynthesisApi) {
+        showAppStatusMessage("Speech playback is not available in this browser.", false);
+        return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    const germanVoice = getPreferredGermanVoice();
+    utterance.lang = GERMAN_SPEECH_LANGUAGE;
+    utterance.rate = 0.95;
+
+    if (germanVoice) {
+        utterance.voice = germanVoice;
+    }
+
+    utterance.onerror = () => {
+        showAppStatusMessage(`Could not play pronunciation for “${text}”.`, false);
+    };
+
+    speechSynthesisApi.cancel();
+    speechSynthesisApi.speak(utterance);
+}
+
+function cancelSpeechPlayback() {
+    const speechSynthesisApi = getSpeechSynthesisApi();
+
+    if (!speechSynthesisApi) {
+        return;
+    }
+
+    speechSynthesisApi.cancel();
+}
+
+function setPronunciationButtonState(button, germanWord, visible) {
+    if (!button) {
+        return;
+    }
+
+    const text = String(germanWord || "").trim();
+    const hasText = Boolean(text);
+    const isSupported = Boolean(getSpeechSynthesisApi());
+
+    button.dataset.germanWord = text;
+    button.disabled = !hasText || !isSupported;
+    button.title = hasText ? `Play German pronunciation for ${text}` : "Play German pronunciation";
+    button.setAttribute(
+        "aria-label",
+        hasText ? `Play German pronunciation for ${text}` : "Play German pronunciation",
+    );
+    button.classList.toggle("hidden", !visible);
+}
+
+function renderStudyPronunciationControls() {
+    const currentCard = studySession?.cards?.[studySession.currentIndex] || null;
+    const prompt = studySession ? getCurrentPrompt(studySession) : null;
+    const promptGermanWord = prompt?.promptMode === "de-en" ? currentCard?.german || prompt?.promptText || "" : "";
+    const feedbackGermanWord = studySession?.answered ? currentCard?.german || "" : "";
+
+    setPronunciationButtonState(
+        elements.studyPromptAudioButton,
+        promptGermanWord,
+        Boolean(promptGermanWord),
+    );
+    setPronunciationButtonState(
+        elements.studyFeedbackAudioButton,
+        feedbackGermanWord,
+        Boolean(feedbackGermanWord),
+    );
+    elements.studyFeedbackAudioRow.classList.toggle("hidden", !feedbackGermanWord);
 }
 
 function onStudyCollectionOptionsChange(event) {

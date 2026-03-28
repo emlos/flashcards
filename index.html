@@ -207,7 +207,12 @@
             <img id="study-image" alt="Flashcard prompt image" />
           </div>
 
-          <div id="study-prompt" class="study-prompt"></div>
+          <div class="study-prompt-row">
+            <button id="study-prompt-audio-button" class="secondary pronunciation-button hidden" type="button"
+              aria-label="Play German pronunciation" title="Play German pronunciation">🔊</button>
+            <div id="study-prompt" class="study-prompt"></div>
+            
+          </div>
 
           <form id="study-answer-form" class="inline-form">
             <input type="text" id="study-answer" autocomplete="off" required />
@@ -225,6 +230,11 @@
 
           <div id="study-feedback" class="study-feedback"></div>
           <p id="study-feedback-note" class="study-feedback-note muted"></p>
+          <div id="study-feedback-audio-row" class="study-feedback-audio hidden">
+            <span class="muted">Pronunciation</span>
+            <button id="study-feedback-audio-button" class="secondary pronunciation-button" type="button"
+              aria-label="Play German pronunciation" title="Play German pronunciation">🔊 Play</button>
+          </div>
 
           <div class="study-actions">
             <button id="study-next-button" class="secondary hidden" type="button">Next</button>
