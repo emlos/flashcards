@@ -2,12 +2,12 @@ import { loadState, saveState, replaceState } from "./storage.js";
 import { parseBulkWords, exportBackupText, parseBackupText } from "./import-export.js";
 import {
     createStudySession,
-    getCurrentCard,
-    buildPrompt,
-    checkAnswer,
+    getCurrentPrompt,
+    submitStudyAnswer,
     advanceSession,
     isSessionFinished,
-} from "./study.js";
+    isGermanAnswerMode,
+} from "./study-mode.js";
 
 const DEFAULT_COLLECTION_COLORS = [
     "#4f46e5",
@@ -80,7 +80,9 @@ const elements = {
     studyImage: document.getElementById("study-image"),
     studyAnswerForm: document.getElementById("study-answer-form"),
     studyAnswer: document.getElementById("study-answer"),
+    studyGermanCharacters: document.getElementById("study-german-characters"),
     studyFeedback: document.getElementById("study-feedback"),
+    studyFeedbackNote: document.getElementById("study-feedback-note"),
     studyNextButton: document.getElementById("study-next-button"),
     studyEndButton: document.getElementById("study-end-button"),
     studyResultText: document.getElementById("study-result-text"),
@@ -117,6 +119,7 @@ function bindEvents() {
 
     elements.studySetupForm.addEventListener("submit", onStudySetupSubmit);
     elements.studyAnswerForm.addEventListener("submit", onStudyAnswerSubmit);
+    elements.studyGermanCharacters.addEventListener("click", onStudyGermanCharacterClick);
     elements.studyNextButton.addEventListener("click", onStudyNext);
     elements.studyEndButton.addEventListener("click", endStudySession);
     elements.studyResetButton.addEventListener("click", resetStudyView);
@@ -335,20 +338,15 @@ function onStudyAnswerSubmit(event) {
         return;
     }
 
-    const prompt = studySession.currentPrompt;
-    const answer = elements.studyAnswer.value;
-    const isCorrect = checkAnswer(answer, prompt.correctAnswers);
+    const result = submitStudyAnswer(studySession, elements.studyAnswer.value);
 
-    studySession.answered = true;
-    if (isCorrect) {
-        studySession.score += 1;
+    if (!result) {
+        return;
     }
 
-    elements.studyFeedback.textContent = isCorrect
-        ? "Correct."
-        : `Incorrect. Correct answer: ${prompt.correctAnswers.join(" / ")}`;
-
-    elements.studyFeedback.className = `study-feedback ${isCorrect ? "correct" : "incorrect"}`;
+    elements.studyFeedback.textContent = result.message;
+    elements.studyFeedbackNote.textContent = result.note;
+    elements.studyFeedback.className = `study-feedback ${result.feedbackClass}`;
     elements.studyNextButton.classList.remove("hidden");
     elements.studyAnswer.disabled = true;
 }
@@ -382,11 +380,13 @@ function resetStudyView() {
     elements.studySessionBox.classList.add("hidden");
     elements.studyResultsBox.classList.add("hidden");
     elements.studyFeedback.textContent = "";
+    elements.studyFeedbackNote.textContent = "";
     elements.studyFeedback.className = "study-feedback";
     elements.studyAnswerForm.reset();
     elements.studyAnswer.disabled = false;
     elements.studyNextButton.classList.add("hidden");
     elements.studyImageWrapper.classList.add("hidden");
+    elements.studyGermanCharacters.classList.add("hidden");
 }
 
 async function onBulkImport() {
@@ -750,10 +750,7 @@ function renderStudySetup() {
 }
 
 function renderStudyQuestion() {
-    const card = getCurrentCard(studySession);
-    const prompt = buildPrompt(card, studySession.mode);
-
-    studySession.currentPrompt = prompt;
+    const prompt = getCurrentPrompt(studySession);
 
     elements.studyProgress.textContent = `${studySession.currentIndex + 1} / ${studySession.cards.length}`;
     elements.studyPrompt.textContent = prompt.promptText;
@@ -761,8 +758,10 @@ function renderStudyQuestion() {
     elements.studyAnswer.disabled = false;
     elements.studyAnswer.focus();
     elements.studyFeedback.textContent = "";
+    elements.studyFeedbackNote.textContent = "";
     elements.studyFeedback.className = "study-feedback";
     elements.studyNextButton.classList.add("hidden");
+    elements.studyGermanCharacters.classList.toggle("hidden", !isGermanAnswerMode(studySession.mode));
 
     if (prompt.imageData) {
         elements.studyImage.src = prompt.imageData;
@@ -779,7 +778,29 @@ function showStudyResults() {
 
     const total = studySession?.cards.length || 0;
     const score = studySession?.score || 0;
-    elements.studyResultText.textContent = `You scored ${score} out of ${total}.`;
+    elements.studyResultText.textContent = `You scored ${formatStudyScore(score)} out of ${formatStudyScore(total)}.`;
+}
+
+function onStudyGermanCharacterClick(event) {
+    const button = event.target.closest("[data-character]");
+
+    if (!button) {
+        return;
+    }
+
+    insertTextAtCursor(elements.studyAnswer, button.dataset.character || "");
+}
+
+function insertTextAtCursor(input, text) {
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? input.value.length;
+    const nextValue = `${input.value.slice(0, start)}${text}${input.value.slice(end)}`;
+
+    input.value = nextValue;
+    input.focus();
+
+    const nextCaret = start + text.length;
+    input.setSelectionRange(nextCaret, nextCaret);
 }
 
 function deleteFlashcards(cardIds) {
@@ -1093,6 +1114,10 @@ function persist() {
 
 function showStudySetupMessage(message) {
     elements.studySetupMessage.textContent = message;
+}
+
+function formatStudyScore(value) {
+    return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
 function showImportExportMessage(message, isSuccess) {
