@@ -62,6 +62,10 @@ let flashcardRenderDebounceId = 0;
 let collectionEditorRenderDebounceId = 0;
 let pendingBackupImportResolver = null;
 let lastFocusedElementBeforeBackupImportModal = null;
+let pendingFlashcardDeleteResolver = null;
+let lastFocusedElementBeforeFlashcardDeleteModal = null;
+let flashcardDeleteSkipConfirmUntilVisibilityChange = false;
+let pendingFlashcardDeleteContext = null;
 let hasBoundSpeechSynthesisEvents = false;
 
 const elements = {
@@ -146,6 +150,14 @@ const elements = {
     backupImportMergeButton: document.getElementById("backup-import-merge-button"),
     backupImportReplaceButton: document.getElementById("backup-import-replace-button"),
     backupImportCancelButton: document.getElementById("backup-import-cancel-button"),
+    flashcardDeleteModal: document.getElementById("flashcard-delete-modal"),
+    flashcardDeleteModalTitle: document.getElementById("flashcard-delete-modal-title"),
+    flashcardDeleteModalDescription: document.getElementById("flashcard-delete-modal-description"),
+    flashcardDeleteModalSummary: document.getElementById("flashcard-delete-modal-summary"),
+    flashcardDeleteSkipRow: document.getElementById("flashcard-delete-skip-row"),
+    flashcardDeleteSkipCheckbox: document.getElementById("flashcard-delete-skip-checkbox"),
+    flashcardDeleteConfirmButton: document.getElementById("flashcard-delete-confirm-button"),
+    flashcardDeleteCancelButton: document.getElementById("flashcard-delete-cancel-button"),
 };
 
 applyUiPrefsToControls();
@@ -193,10 +205,19 @@ function replaceAppState(nextState) {
 
 function onAppPageHide(event) {
     cancelSpeechPlayback();
+    flashcardDeleteSkipConfirmUntilVisibilityChange = false;
 
     if (!event.persisted) {
         releaseStateImageObjectUrls(state);
     }
+}
+
+function onDocumentVisibilityChange() {
+    if (!document.hidden) {
+        return;
+    }
+
+    flashcardDeleteSkipConfirmUntilVisibilityChange = false;
 }
 
 function bindEvents() {
@@ -235,6 +256,14 @@ function bindEvents() {
     elements.backupImportCancelButton.addEventListener("click", () => closeBackupImportModal(null));
     elements.backupImportModal.addEventListener("click", onBackupImportModalClick);
     elements.backupImportModal.addEventListener("keydown", onBackupImportModalKeyDown);
+    elements.flashcardDeleteConfirmButton.addEventListener("click", () =>
+        closeFlashcardDeleteModal(true),
+    );
+    elements.flashcardDeleteCancelButton.addEventListener("click", () =>
+        closeFlashcardDeleteModal(false),
+    );
+    elements.flashcardDeleteModal.addEventListener("click", onFlashcardDeleteModalClick);
+    elements.flashcardDeleteModal.addEventListener("keydown", onFlashcardDeleteModalKeyDown);
     elements.studyResetButton.addEventListener("click", resetStudyView);
 
     elements.bulkImportButton.addEventListener("click", onBulkImport);
@@ -242,6 +271,7 @@ function bindEvents() {
     elements.exportButton.addEventListener("click", onExport);
     elements.deleteAllButton.addEventListener("click", onDeleteAll);
     bindSpeechSynthesisEvents();
+    document.addEventListener("visibilitychange", onDocumentVisibilityChange);
     window.addEventListener("pagehide", onAppPageHide);
 }
 
@@ -400,15 +430,7 @@ async function onDeleteSelectedFlashcards() {
         return;
     }
 
-    const confirmed = window.confirm(
-        `Delete ${idsToDelete.length} selected flashcard(s)? This also removes them from all collections.`,
-    );
-
-    if (!confirmed) {
-        return;
-    }
-
-    await deleteFlashcards(idsToDelete);
+    await requestFlashcardDeletion(idsToDelete, { allowSkipPrompt: false });
 }
 
 async function onCollectionSubmit(event) {
@@ -935,7 +957,7 @@ function renderFlashcards() {
         deleteButton.className = "secondary";
         deleteButton.textContent = "Delete";
         deleteButton.addEventListener("click", () => {
-            void deleteFlashcards([card.id]);
+            void requestFlashcardDeletion([card.id], { allowSkipPrompt: true });
         });
         side.appendChild(deleteButton);
 
@@ -1929,6 +1951,122 @@ function closeBackupImportModal(selection) {
     resolver(selection === "merge" || selection === "replace" ? selection : null);
 }
 
+
+function buildModalSummaryGrid(items) {
+    return `
+      <div class="modal-summary-grid">
+        ${items
+            .map(
+                ({ label, value }) => `
+                  <div class="modal-summary-item">
+                    <span class="modal-summary-label">${escapeHtml(label)}</span>
+                    <div class="modal-summary-value">${escapeHtml(value)}</div>
+                  </div>
+                `,
+            )
+            .join("")}
+      </div>
+    `;
+}
+
+async function requestFlashcardDeletion(cardIds, { allowSkipPrompt }) {
+    const normalizedCardIds = [...new Set(cardIds)].filter(Boolean);
+    if (normalizedCardIds.length === 0) {
+        return false;
+    }
+
+    const cardsToDelete = state.flashcards.filter((card) => normalizedCardIds.includes(card.id));
+    if (cardsToDelete.length === 0) {
+        return false;
+    }
+
+    if (allowSkipPrompt && flashcardDeleteSkipConfirmUntilVisibilityChange) {
+        await deleteFlashcards(normalizedCardIds);
+        return true;
+    }
+
+    const confirmed = await openFlashcardDeleteModal(cardsToDelete, { allowSkipPrompt });
+    if (!confirmed) {
+        return false;
+    }
+
+    await deleteFlashcards(normalizedCardIds);
+    return true;
+}
+
+function openFlashcardDeleteModal(cardsToDelete, { allowSkipPrompt }) {
+    if (pendingFlashcardDeleteResolver) {
+        closeFlashcardDeleteModal(false);
+    }
+
+    const isSingleFlashcardDelete = cardsToDelete.length === 1;
+    const primaryCard = cardsToDelete[0] || null;
+    const title = isSingleFlashcardDelete ? "Delete flashcard" : "Delete selected flashcards";
+    const description = isSingleFlashcardDelete
+        ? `Delete "${primaryCard?.german || "this flashcard"}"?`
+        : `Delete ${cardsToDelete.length} selected flashcard(s)?`;
+    const summaryItems = isSingleFlashcardDelete
+        ? [
+              { label: "Flashcard", value: primaryCard?.german || "Unknown" },
+          ]
+        : [
+              { label: "Flashcards", value: String(cardsToDelete.length) },
+          ];
+
+    pendingFlashcardDeleteContext = { allowSkipPrompt };
+    elements.flashcardDeleteModalTitle.textContent = title;
+    elements.flashcardDeleteConfirmButton.textContent = isSingleFlashcardDelete
+        ? "Delete flashcard"
+        : `Delete ${cardsToDelete.length} flashcard(s)`;
+    elements.flashcardDeleteModalDescription.textContent = description;
+    elements.flashcardDeleteModalSummary.innerHTML = buildModalSummaryGrid(summaryItems);
+    elements.flashcardDeleteSkipCheckbox.checked = false;
+    elements.flashcardDeleteSkipRow.classList.toggle("hidden", !allowSkipPrompt);
+
+    lastFocusedElementBeforeFlashcardDeleteModal =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    document.body.classList.add("modal-open");
+    elements.flashcardDeleteModal.classList.remove("hidden");
+
+    return new Promise((resolve) => {
+        pendingFlashcardDeleteResolver = resolve;
+        window.requestAnimationFrame(() => {
+            elements.flashcardDeleteConfirmButton.focus();
+        });
+    });
+}
+
+function closeFlashcardDeleteModal(confirmed) {
+    if (!pendingFlashcardDeleteResolver) {
+        return;
+    }
+
+    const resolver = pendingFlashcardDeleteResolver;
+    pendingFlashcardDeleteResolver = null;
+
+    if (
+        confirmed &&
+        pendingFlashcardDeleteContext?.allowSkipPrompt &&
+        elements.flashcardDeleteSkipCheckbox.checked
+    ) {
+        flashcardDeleteSkipConfirmUntilVisibilityChange = true;
+    }
+
+    pendingFlashcardDeleteContext = null;
+    elements.flashcardDeleteModal.classList.add("hidden");
+    elements.flashcardDeleteModalSummary.innerHTML = "";
+    elements.flashcardDeleteSkipCheckbox.checked = false;
+    elements.flashcardDeleteSkipRow.classList.add("hidden");
+    document.body.classList.remove("modal-open");
+
+    if (lastFocusedElementBeforeFlashcardDeleteModal?.focus) {
+        lastFocusedElementBeforeFlashcardDeleteModal.focus();
+    }
+    lastFocusedElementBeforeFlashcardDeleteModal = null;
+
+    resolver(Boolean(confirmed));
+}
+
 function onBackupImportModalClick(event) {
     if (event.target === elements.backupImportModal) {
         closeBackupImportModal(null);
@@ -1955,6 +2093,53 @@ function onBackupImportModalKeyDown(event) {
         elements.backupImportReplaceButton,
         elements.backupImportCancelButton,
     ].filter((element) => element && !element.disabled);
+
+    if (focusableElements.length === 0) {
+        return;
+    }
+
+    const firstElement = focusableElements[0];
+    const lastElement = focusableElements[focusableElements.length - 1];
+    const activeElement = document.activeElement;
+
+    if (event.shiftKey && activeElement === firstElement) {
+        event.preventDefault();
+        lastElement.focus();
+        return;
+    }
+
+    if (!event.shiftKey && activeElement === lastElement) {
+        event.preventDefault();
+        firstElement.focus();
+    }
+}
+
+function onFlashcardDeleteModalClick(event) {
+    if (event.target === elements.flashcardDeleteModal) {
+        closeFlashcardDeleteModal(false);
+    }
+}
+
+function onFlashcardDeleteModalKeyDown(event) {
+    if (elements.flashcardDeleteModal.classList.contains("hidden")) {
+        return;
+    }
+
+    if (event.key === "Escape") {
+        event.preventDefault();
+        closeFlashcardDeleteModal(false);
+        return;
+    }
+
+    if (event.key !== "Tab") {
+        return;
+    }
+
+    const focusableElements = [
+        elements.flashcardDeleteConfirmButton,
+        elements.flashcardDeleteCancelButton,
+        elements.flashcardDeleteSkipCheckbox,
+    ].filter((element) => element && !element.disabled && element.offsetParent !== null);
 
     if (focusableElements.length === 0) {
         return;
