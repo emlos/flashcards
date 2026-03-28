@@ -17,17 +17,26 @@
     --error-text: #991b1b;
 }
 
+html,
+body {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+}
+
 body {
     margin: 0;
     font-family: Arial, sans-serif;
     background: var(--bg);
     color: var(--text);
+    -webkit-text-size-adjust: 100%;
 }
 
 button,
 input,
 select {
     font: inherit;
+    max-width: 100%;
 }
 
 button {
@@ -74,6 +83,11 @@ input[type="color"] {
     height: 2.5rem;
 }
 
+input[type="file"] {
+    width: 100%;
+    min-width: 0;
+}
+
 code,
 pre {
     font-family: Consolas, monospace;
@@ -93,12 +107,16 @@ pre {
     min-height: 100vh;
     display: grid;
     grid-template-columns: 280px 1fr;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
 }
 
 .sidebar {
     background: #111827;
     color: white;
     padding: 1.5rem;
+    min-width: 0;
 }
 
 .sidebar h1 {
@@ -116,6 +134,9 @@ pre {
     display: flex;
     flex-direction: column;
     gap: 0.6rem;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
 }
 
 .tab-button {
@@ -160,11 +181,14 @@ pre {
 }
 
 .main-content {
+    min-width: 0;
+    max-width: 100%;
     padding: 1.5rem;
 }
 
 .panel-header {
     margin-bottom: 1rem;
+    min-width: 0;
 }
 
 .panel-header h2 {
@@ -177,6 +201,9 @@ pre {
     border-radius: 12px;
     padding: 1rem;
     margin-bottom: 1rem;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
 }
 
 .form-card {
@@ -193,6 +220,7 @@ pre {
     display: flex;
     gap: 0.75rem;
     align-items: flex-end;
+    min-width: 0;
 }
 
 .inline-form input {
@@ -212,6 +240,7 @@ pre {
 .stack-form {
     display: grid;
     gap: 0.9rem;
+    min-width: 0;
 }
 
 .stack-form label,
@@ -219,6 +248,7 @@ pre {
 .inline-form label {
     display: grid;
     gap: 0.35rem;
+    min-width: 0;
 }
 
 .section-row {
@@ -227,6 +257,7 @@ pre {
     gap: 1rem;
     align-items: center;
     margin-bottom: 0.75rem;
+    min-width: 0;
 }
 
 .toolbar {
@@ -234,6 +265,7 @@ pre {
     gap: 0.75rem;
     align-items: center;
     margin-bottom: 0.75rem;
+    min-width: 0;
 }
 
 .toolbar-wrap {
@@ -287,11 +319,25 @@ pre {
 .item-title {
     font-weight: bold;
     margin-bottom: 0.35rem;
+    overflow-wrap: anywhere;
 }
 
 .item-subtitle,
 .muted {
     color: var(--muted);
+}
+
+.item-subtitle,
+.item-tags,
+.study-prompt,
+.study-feedback-note,
+.multiselect-summary,
+.multiselect-option-text,
+.modal-summary-value,
+.sidebar-subtitle,
+.storage-note,
+.panel-header p {
+    overflow-wrap: anywhere;
 }
 
 .item-tags {
@@ -496,6 +542,8 @@ pre {
 
 .tab-panel {
     display: none;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .tab-panel.active {
@@ -780,7 +828,33 @@ pre {
     }
 
     .sidebar {
-        padding-bottom: 1rem;
+        padding: 1rem;
+        width: 100%;
+        max-width: 100%;
+    }
+
+    .tab-nav {
+        width: 100%;
+        max-width: 100%;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        padding-bottom: 0.25rem;
+        scrollbar-width: thin;
+    }
+
+    .tab-button {
+        flex: 0 0 auto;
+        white-space: nowrap;
+        max-width: 100%;
+    }
+
+    .main-content {
+        padding: 1rem;
+    }
+
+    .card {
+        padding: 0.9rem;
     }
 
     .grid-two,
@@ -788,29 +862,151 @@ pre {
         grid-template-columns: 1fr;
     }
 
+    .section-row,
     .inline-form,
     .toolbar,
     .study-prompt-row,
     .pagination-controls,
-    .pagination-button-group {
+    .pagination-button-group,
+    .study-actions {
         flex-direction: column;
         align-items: stretch;
     }
 
-    .item-row {
+    .toolbar > *,
+    .study-actions > *,
+    .flashcard-edit-actions > *,
+    .modal-actions > button,
+    .stack-form > button,
+    .inline-form > button {
+        width: 100%;
+    }
+
+    .item-row,
+    .checkbox-item {
         flex-direction: column;
     }
 
-    .item-row-side {
+    .item-row-side,
+    .stat-side {
+        width: 100%;
+        min-width: 0;
+        text-align: left;
+        align-items: stretch;
+    }
+
+    .item-row-side > button {
+        width: 100%;
+    }
+
+    .flashcard-thumbnail {
+        width: min(100%, 160px);
+        height: auto;
+        aspect-ratio: 1 / 1;
+    }
+
+    .segmented-toggle {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .segmented-toggle-button {
+        width: 100%;
+    }
+
+    .study-answer-form {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .study-choice-button {
         align-items: flex-start;
     }
 
     .modal-summary-grid {
         grid-template-columns: 1fr;
     }
+}
 
-    .modal-actions > button {
-        flex-basis: 100%;
+@media (max-width: 640px) {
+    .sidebar {
+        padding: 0.9rem 0.75rem;
+    }
+
+    .tab-nav {
+        margin: 0 -0.15rem;
+        padding: 0 0.15rem 0.25rem;
+    }
+
+    .main-content {
+        padding: 0.75rem;
+    }
+
+    .card,
+    .modal-card {
+        padding: 0.85rem;
+        border-radius: 10px;
+        width: 100%;
+        max-width: 100%;
+    }
+
+    .segmented-toggle {
+        grid-template-columns: 1fr;
+    }
+
+    .study-prompt {
+        font-size: 1.15rem;
+    }
+
+    .study-character-tools {
+        align-items: stretch;
+    }
+
+    .study-character-tools .muted {
+        width: 100%;
+    }
+
+    .character-button {
+        flex: 1 1 calc(25% - 0.5rem);
+        min-width: 0;
+    }
+
+    .checkbox-list,
+    .multiselect-options,
+    .flashcard-edit-collections {
+        max-height: min(45vh, 320px);
+    }
+
+    .modal-overlay {
+        padding: 0.5rem;
+    }
+
+    .modal-card {
+        width: 100%;
+        max-height: calc(100vh - 1rem);
+    }
+}
+
+@media (max-width: 420px) {
+    .tab-button,
+    .segmented-toggle-button {
+        padding-left: 0.8rem;
+        padding-right: 0.8rem;
+    }
+
+    .tab-button-with-badge {
+        gap: 0.5rem;
+    }
+
+    .tab-badge {
+        min-width: 1.55rem;
+        padding: 0.12rem 0.45rem;
+        font-size: 0.76rem;
+    }
+
+    .study-choice-index {
+        width: 1.75rem;
+        height: 1.75rem;
     }
 }
 
