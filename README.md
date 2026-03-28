@@ -37,14 +37,15 @@ You can also serve the folder with any static file server, but no backend is req
 
 ### 1. Bulk word import
 
-One flashcard per line:
+One flashcard per line.
 
+Supported formats:
 ```text
 Haus | house
-Baum | tree
-Apfel | apple
+Baum | tree | Nature
+Apfel | apple | Food, Basics
 ```
-
+The third field is optional. If present, it is a comma-separated list of collection names. Missing collections are created automatically during import.
 Blank lines are ignored. Lines starting with `#` are treated as comments.
 
 ### 2. Full backup export/import

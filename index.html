@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>German-English Flashcards</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
+
 <body>
   <div class="app-shell">
     <aside class="sidebar">
@@ -165,7 +167,8 @@
         <div class="grid-two">
           <div class="card">
             <h3>Bulk Import Words</h3>
-            <p>TXT format: one card per line in the form <code>German | English</code></p>
+            <p>TXT format: <code>German | English</code> or <code>German | English | Collection A, Collection B</code>
+            </p>
             <input type="file" id="bulk-import-file" accept=".txt" />
             <button id="bulk-import-button" type="button">Import words</button>
           </div>
@@ -185,24 +188,23 @@
         </div>
 
         <div class="card">
-          <h3>Format Reference</h3>
-          <div class="format-box">
-            <strong>Bulk word import:</strong>
-            <pre>Haus | house
-Baum | tree
-Apfel | apple</pre>
+          <strong>Bulk word import:</strong>
+          <pre>Haus | house
+Baum | tree | Nature
+Apfel | apple | Food, Basics</pre>
 
-            <strong>Full backup export/import:</strong>
-            <pre>CARD	card-id	encodedGerman	encodedEnglish	encodedImageData
+          <strong>Full backup export/import:</strong>
+          <pre>CARD	card-id	encodedGerman	encodedEnglish	encodedImageData
 COLLECTION	collection-id	encodedName	cardId1,cardId2,cardId3</pre>
-          </div>
         </div>
+  </div>
 
-        <div id="import-export-message" class="status-message"></div>
-      </section>
-    </main>
+  <div id="import-export-message" class="status-message"></div>
+  </section>
+  </main>
   </div>
 
   <script type="module" src="js/app.js"></script>
 </body>
+
 </html>

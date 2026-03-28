@@ -1,6 +1,9 @@
-# One flashcard per line
-Haus | house
-Baum | tree
-Apfel | apple
-Buch | book
-Wasser | water
+# Supported:
+# German | English
+# German | English | Collection A, Collection B
+
+Haus | house | Basics, Home
+Baum | tree | Nature
+Apfel | apple | Food, Basics
+Buch | book | Basics, School
+Wasser | water | Basics, Food
