@@ -391,7 +391,7 @@ function onClearFlashcardSelection() {
     renderFlashcards();
 }
 
-function onDeleteSelectedFlashcards() {
+async function onDeleteSelectedFlashcards() {
     const idsToDelete = state.flashcards
         .filter((card) => selectedFlashcardIds.has(card.id))
         .map((card) => card.id);
@@ -408,7 +408,7 @@ function onDeleteSelectedFlashcards() {
         return;
     }
 
-    deleteFlashcards(idsToDelete);
+    await deleteFlashcards(idsToDelete);
 }
 
 async function onCollectionSubmit(event) {
@@ -934,7 +934,9 @@ function renderFlashcards() {
         deleteButton.type = "button";
         deleteButton.className = "secondary";
         deleteButton.textContent = "Delete";
-        deleteButton.addEventListener("click", () => deleteFlashcards([card.id]));
+        deleteButton.addEventListener("click", () => {
+            void deleteFlashcards([card.id]);
+        });
         side.appendChild(deleteButton);
 
         row.append(left, main, side);
@@ -984,7 +986,7 @@ function renderCollections() {
         colorInput.className = "color-input";
         colorInput.title = `Color for ${collection.name}`;
         colorInput.addEventListener("input", () => {
-            updateCollectionColor(collection.id, colorInput.value);
+            void updateCollectionColor(collection.id, colorInput.value);
         });
 
         const selectButton = document.createElement("button");
@@ -1002,7 +1004,9 @@ function renderCollections() {
         deleteButton.type = "button";
         deleteButton.className = "secondary";
         deleteButton.textContent = "Delete";
-        deleteButton.addEventListener("click", () => deleteCollection(collection.id));
+        deleteButton.addEventListener("click", () => {
+            void deleteCollection(collection.id);
+        });
 
         side.append(colorInput, selectButton, deleteButton);
         row.append(main, side);
@@ -1050,9 +1054,9 @@ function renderCollectionEditor() {
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
         checkbox.checked = collection.cardIds.includes(card.id);
-        checkbox.addEventListener("change", () =>
-            toggleCardInCollection(collection.id, card.id, checkbox.checked),
-        );
+        checkbox.addEventListener("change", () => {
+            void toggleCardInCollection(collection.id, card.id, checkbox.checked);
+        });
 
         const text = document.createElement("div");
         text.className = "checkbox-item-content";
@@ -2171,7 +2175,7 @@ function insertTextAtCursor(input, text) {
     input.setSelectionRange(nextCaret, nextCaret);
 }
 
-function deleteFlashcards(cardIds) {
+async function deleteFlashcards(cardIds) {
     const idsToDelete = new Set(cardIds);
 
     state.flashcards
@@ -2197,11 +2201,11 @@ function deleteFlashcards(cardIds) {
         editingFlashcardId = null;
     }
 
-    persist();
+    await persist();
     renderAll();
 }
 
-function deleteCollection(collectionId) {
+async function deleteCollection(collectionId) {
     state.collections = state.collections.filter((collection) => collection.id !== collectionId);
 
     if (selectedCollectionId === collectionId) {
@@ -2219,12 +2223,12 @@ function deleteCollection(collectionId) {
         selectedStudyCollectionIds: [...selectedStudyCollectionIds],
     });
 
-    persist();
+    await persist();
     setCollectionColorInputDefault();
     renderAll();
 }
 
-function toggleCardInCollection(collectionId, cardId, shouldInclude) {
+async function toggleCardInCollection(collectionId, cardId, shouldInclude) {
     const collection = state.collections.find((item) => item.id === collectionId);
     if (!collection) {
         return;
@@ -2238,20 +2242,20 @@ function toggleCardInCollection(collectionId, cardId, shouldInclude) {
         collection.cardIds = collection.cardIds.filter((id) => id !== cardId);
     }
 
-    persist();
+    await persist();
     renderCollections();
     renderCollectionEditor();
     renderFlashcards();
 }
 
-function updateCollectionColor(collectionId, color) {
+async function updateCollectionColor(collectionId, color) {
     const collection = state.collections.find((item) => item.id === collectionId);
     if (!collection) {
         return;
     }
 
     collection.color = color;
-    persist();
+    await persist();
     renderCollections();
     renderCollectionEditor();
     renderFlashcards();
