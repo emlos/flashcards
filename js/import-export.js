@@ -101,7 +101,7 @@ export function exportBackupText(state) {
                 encodeField(card.german),
                 encodeField(JSON.stringify(card.englishAnswers || [])),
                 encodeField(card.imageData || ""),
-            ].join("\\t"),
+            ].join("\t"),
         );
     }
 
@@ -112,11 +112,11 @@ export function exportBackupText(state) {
                 collection.id,
                 encodeField(collection.name),
                 Array.isArray(collection.cardIds) ? collection.cardIds.join(",") : "",
-            ].join("\\t"),
+            ].join("\t"),
         );
     }
 
-    return lines.join("\\n");
+    return lines.join("\n");
 }
 
 export function parseBackupText(text) {
@@ -129,7 +129,7 @@ export function parseBackupText(text) {
     const collections = [];
 
     for (const line of lines) {
-        const parts = line.split("\\t");
+        const parts = line.split("\t");
         const type = parts[0];
 
         if (type === "CARD") {
