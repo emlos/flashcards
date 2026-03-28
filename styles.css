@@ -580,6 +580,55 @@ pre {
     display: block;
 }
 
+.study-choice-grid {
+    display: grid;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+}
+
+.study-choice-button {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    justify-content: flex-start;
+    text-align: left;
+    padding: 0.8rem 0.95rem;
+}
+
+.study-choice-index {
+    width: 2rem;
+    height: 2rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    flex: 0 0 auto;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.study-choice-text {
+    flex: 1;
+}
+
+.study-choice-button.is-selected {
+    border-color: var(--accent);
+}
+
+.study-choice-button.is-correct {
+    border-color: #86efac;
+    background: var(--success-bg);
+    color: var(--success-text);
+}
+
+.study-choice-button.is-selected-wrong {
+    border-color: #fca5a5;
+    background: var(--error-bg);
+    color: var(--error-text);
+}
+
 .study-feedback {
     min-height: 2rem;
     margin-top: 0.75rem;

@@ -186,6 +186,7 @@
               Mode
               <select id="study-mode" required>
                 <option value="de-en">German → English</option>
+                <option value="mc-de-en">Multiple choice</option>
                 <option value="en-de">English → German</option>
                 <option value="image-de">Image → German</option>
                 <option value="random">Random mix</option>
@@ -221,6 +222,8 @@
             <input type="text" id="study-answer" autocomplete="off" required />
             <button id="study-check-button" type="submit">Check</button>
           </form>
+
+          <div id="study-choice-options" class="study-choice-grid hidden" role="group" aria-label="Multiple choice answers"></div>
 
           <div id="study-german-characters" class="study-character-tools hidden" aria-label="German characters">
             <span class="muted">German letters</span>

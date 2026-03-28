@@ -135,6 +135,7 @@ const elements = {
     studyProgress: document.getElementById("study-progress"),
     studyPrompt: document.getElementById("study-prompt"),
     studyPromptAudioButton: document.getElementById("study-prompt-audio-button"),
+    studyChoiceOptions: document.getElementById("study-choice-options"),
     studyImageWrapper: document.getElementById("study-image-wrapper"),
     studyImage: document.getElementById("study-image"),
     studyAnswerForm: document.getElementById("study-answer-form"),
@@ -264,6 +265,7 @@ function bindEvents() {
     elements.studyMode.addEventListener("change", onStudyPreferencesChange);
     elements.studyCardLimit.addEventListener("input", onStudyPreferencesChange);
     elements.studyAnswerForm.addEventListener("submit", onStudyAnswerSubmit);
+    elements.studyChoiceOptions.addEventListener("click", onStudyChoiceOptionsClick);
     elements.studyGermanCharacters.addEventListener("click", onStudyGermanCharacterClick);
     elements.studyPromptAudioButton.addEventListener("click", onStudyPronunciationButtonClick);
     elements.studyFeedbackAudioButton.addEventListener("click", onStudyPronunciationButtonClick);
@@ -446,6 +448,7 @@ function onStudyPreferencesChange() {
         studyMode: elements.studyMode.value,
         studyCardLimit: elements.studyCardLimit.value.trim(),
     });
+    renderStudyModeAvailability();
 }
 
 async function onFlashcardSubmit(event) {
@@ -723,7 +726,7 @@ function onStudySetupSubmit(event) {
         skippedCardsWithoutImages = selectedCardCount - cards.length;
     }
 
-    const studyableCardCount = cardLimit && cardLimit < cards.length ? cardLimit : cards.length;
+    const studyableCardCount = getEffectiveStudyCardCount(cards, cardLimit);
 
     if (cards.length === 0) {
         showStudySetupMessage(
@@ -736,6 +739,13 @@ function onStudySetupSubmit(event) {
         return;
     }
 
+    if (mode === "mc-de-en" && studyableCardCount < 5) {
+        showStudySetupMessage(
+            "Multiple choice needs at least 5 study cards after your current collection, image, and max-card filters.",
+        );
+        return;
+    }
+
     showStudySetupMessage(
         getStudyImageModeMessage({
             selectedCardCount,
@@ -743,16 +753,15 @@ function onStudySetupSubmit(event) {
             remainingCardsCount: studyableCardCount,
         }),
     );
-    studySession = createStudySession(cards, mode);
+    studySession = createStudySession(cards, mode, {
+        cardLimit,
+        collections: getStudyCollectionsForSelection(),
+    });
     studySession.collectionIds = [...selectedStudyCollectionIds];
     studySession.collectionLabel = getStudyCollectionSummaryText();
     studySession.startedAt = new Date().toISOString();
     studySession.answeredCount = 0;
     studySession.historyRecorded = false;
-
-    if (cardLimit && cardLimit < studySession.cards.length) {
-        studySession.cards = studySession.cards.slice(0, cardLimit);
-    }
 
     elements.studyResultsBox.classList.add("hidden");
     elements.studySessionBox.classList.remove("hidden");
@@ -761,7 +770,20 @@ function onStudySetupSubmit(event) {
 
 async function onStudyAnswerSubmit(event) {
     event.preventDefault();
+    await handleStudyAnswerSubmission(elements.studyAnswer.value);
+}
 
+function onStudyChoiceOptionsClick(event) {
+    const choiceButton = event.target.closest("button[data-choice-value]");
+
+    if (!choiceButton) {
+        return;
+    }
+
+    void handleStudyAnswerSubmission(choiceButton.dataset.choiceValue || "");
+}
+
+async function handleStudyAnswerSubmission(answerValue) {
     if (!studySession) {
         return;
     }
@@ -771,8 +793,18 @@ async function onStudyAnswerSubmit(event) {
         return;
     }
 
+    const prompt = getCurrentPrompt(studySession);
+
+    if (!prompt) {
+        return;
+    }
+
+    if (prompt.responseKind === "choice") {
+        prompt.selectedChoice = String(answerValue || "");
+    }
+
     const currentCard = studySession.cards[studySession.currentIndex] || null;
-    const result = submitStudyAnswer(studySession, elements.studyAnswer.value);
+    const result = submitStudyAnswer(studySession, answerValue);
 
     if (!result) {
         return;
@@ -790,6 +822,11 @@ async function onStudyAnswerSubmit(event) {
     elements.studyAnswer.disabled = true;
     elements.studyCheckButton.disabled = true;
     elements.studyAnswerForm.classList.add("study-answer-form-complete");
+
+    if (prompt.responseKind === "choice") {
+        renderStudyChoiceOptions(prompt);
+    }
+
     elements.studyNextButton.classList.remove("hidden");
     renderStudyPronunciationControls();
     elements.studyNextButton.focus();
@@ -834,9 +871,12 @@ function resetStudyView() {
     elements.studyAnswerForm.reset();
     elements.studyAnswer.disabled = false;
     elements.studyCheckButton.disabled = false;
+    elements.studyAnswerForm.classList.remove("hidden");
     elements.studyAnswerForm.classList.remove("study-answer-form-complete");
     elements.studyNextButton.classList.add("hidden");
     elements.studyImageWrapper.classList.add("hidden");
+    elements.studyChoiceOptions.innerHTML = "";
+    elements.studyChoiceOptions.classList.add("hidden");
     elements.studyGermanCharacters.classList.add("hidden");
     elements.studyPromptAudioButton.classList.add("hidden");
     elements.studyPromptAudioButton.disabled = false;
@@ -1312,6 +1352,7 @@ function renderStudySetup() {
     }
 
     elements.studyCollectionSummary.textContent = getStudyCollectionSummaryText();
+    renderStudyModeAvailability();
 }
 
 function renderStudyInsights() {
@@ -1515,12 +1556,11 @@ function renderStudyQuestion() {
     elements.studyAnswer.disabled = false;
     elements.studyCheckButton.disabled = false;
     elements.studyAnswerForm.classList.remove("study-answer-form-complete");
-    elements.studyAnswer.focus();
     elements.studyFeedback.textContent = "";
     elements.studyFeedbackNote.textContent = "";
     elements.studyFeedback.className = "study-feedback";
     elements.studyNextButton.classList.add("hidden");
-    elements.studyGermanCharacters.classList.toggle("hidden", !prompt.expectsGermanAnswer);
+    renderStudyResponseControls(prompt);
     renderStudyPronunciationControls();
 
     if (prompt.imageData) {
@@ -1530,6 +1570,68 @@ function renderStudyQuestion() {
         elements.studyImage.src = "";
         elements.studyImageWrapper.classList.add("hidden");
     }
+}
+
+function renderStudyResponseControls(prompt) {
+    const isChoicePrompt = prompt?.responseKind === "choice";
+
+    elements.studyAnswerForm.classList.toggle("hidden", isChoicePrompt);
+    elements.studyChoiceOptions.classList.toggle("hidden", !isChoicePrompt);
+
+    if (isChoicePrompt) {
+        elements.studyGermanCharacters.classList.add("hidden");
+        renderStudyChoiceOptions(prompt);
+
+        const firstChoiceButton = elements.studyChoiceOptions.querySelector("button[data-choice-value]");
+        if (firstChoiceButton) {
+            firstChoiceButton.focus();
+        }
+        return;
+    }
+
+    elements.studyChoiceOptions.innerHTML = "";
+    elements.studyGermanCharacters.classList.toggle("hidden", !prompt.expectsGermanAnswer);
+    elements.studyAnswer.focus();
+}
+
+function renderStudyChoiceOptions(prompt) {
+    const choiceOptions = Array.isArray(prompt?.choiceOptions) ? prompt.choiceOptions : [];
+    const selectedChoice = String(prompt?.selectedChoice || "");
+
+    elements.studyChoiceOptions.innerHTML = "";
+
+    choiceOptions.forEach((option, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "secondary study-choice-button";
+        button.dataset.choiceValue = option.text;
+        button.disabled = Boolean(studySession?.answered);
+
+        if (studySession?.answered) {
+            if (option.isCorrect) {
+                button.classList.add("is-correct");
+            }
+
+            if (selectedChoice === option.text) {
+                button.classList.add("is-selected");
+
+                if (!option.isCorrect) {
+                    button.classList.add("is-selected-wrong");
+                }
+            }
+        }
+
+        const optionIndex = document.createElement("span");
+        optionIndex.className = "study-choice-index";
+        optionIndex.textContent = String.fromCharCode(65 + index);
+
+        const optionText = document.createElement("span");
+        optionText.className = "study-choice-text";
+        optionText.textContent = option.text;
+
+        button.append(optionIndex, optionText);
+        elements.studyChoiceOptions.appendChild(button);
+    });
 }
 
 function showStudyResults() {
@@ -1657,7 +1759,9 @@ function setPronunciationButtonState(button, germanWord, visible) {
 function renderStudyPronunciationControls() {
     const currentCard = studySession?.cards?.[studySession.currentIndex] || null;
     const prompt = studySession ? getCurrentPrompt(studySession) : null;
-    const promptGermanWord = prompt?.promptMode === "de-en" ? currentCard?.german || prompt?.promptText || "" : "";
+    const promptGermanWord = ["de-en", "mc-de-en"].includes(prompt?.promptMode)
+        ? currentCard?.german || prompt?.promptText || ""
+        : "";
     const feedbackGermanWord = studySession?.answered ? currentCard?.german || "" : "";
 
     setPronunciationButtonState(
@@ -2438,6 +2542,7 @@ function formatSessionCompletionLabel(entry) {
 function formatStudyModeLabel(mode) {
     const labels = {
         "de-en": "German → English",
+        "mc-de-en": "Multiple choice",
         "en-de": "English → German",
         "image-de": "Image → German",
         random: "Random mix",
@@ -2522,6 +2627,45 @@ function getStudyCardsForSelection() {
     });
 
     return state.flashcards.filter((card) => cardIds.has(card.id));
+}
+
+function getStudyCollectionsForSelection() {
+    sanitizeStudyCollectionSelection();
+
+    if (selectedStudyCollectionIds.has(STUDY_ALL_COLLECTION_ID)) {
+        return [...state.collections];
+    }
+
+    return state.collections.filter((collection) => selectedStudyCollectionIds.has(collection.id));
+}
+
+function getEffectiveStudyCardCount(cards, cardLimit) {
+    return cardLimit && cardLimit < cards.length ? cardLimit : cards.length;
+}
+
+function renderStudyModeAvailability() {
+    const multipleChoiceOption = elements.studyMode?.querySelector('option[value="mc-de-en"]');
+
+    if (!multipleChoiceOption) {
+        return;
+    }
+
+    const cardLimit = parseStudyCardLimit(elements.studyCardLimit?.value);
+    const selectedCards = getStudyCardsForSelection();
+    const effectiveCardCount = Number.isNaN(cardLimit)
+        ? selectedCards.length
+        : getEffectiveStudyCardCount(selectedCards, cardLimit);
+    const isMultipleChoiceAvailable = effectiveCardCount >= 5;
+
+    multipleChoiceOption.disabled = !isMultipleChoiceAvailable;
+
+    if (!isMultipleChoiceAvailable && elements.studyMode.value === "mc-de-en") {
+        elements.studyMode.value = "de-en";
+        updateUiPrefs({
+            studyMode: "de-en",
+            studyCardLimit: elements.studyCardLimit.value.trim(),
+        });
+    }
 }
 
 function getStudySelectionEmptyMessage(needsImages) {

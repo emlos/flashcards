@@ -1,11 +1,20 @@
-export function createStudySession(cards, mode) {
+const MULTIPLE_CHOICE_OPTION_COUNT = 5;
+
+export function createStudySession(cards, mode, options = {}) {
+    const shuffledCards = shuffle([...cards]);
+    const cardLimit = toPositiveIntegerOrNull(options.cardLimit);
+    const sessionCards = cardLimit && cardLimit < shuffledCards.length
+        ? shuffledCards.slice(0, cardLimit)
+        : shuffledCards;
+
     return {
         mode,
-        cards: shuffle([...cards]),
+        cards: sessionCards,
         currentIndex: 0,
         score: 0,
         answered: false,
         currentPrompt: null,
+        collectionMembershipByCardId: buildCollectionMembershipMap(options.collections || []),
     };
 }
 
@@ -20,14 +29,15 @@ export function getCurrentPrompt(session) {
 
     if (!session.currentPrompt) {
         const card = getCurrentCard(session);
-        session.currentPrompt = card ? buildPrompt(card, session.mode) : null;
+        session.currentPrompt = card ? buildPrompt(card, session.mode, session) : null;
     }
 
     return session.currentPrompt;
 }
 
-export function buildPrompt(card, mode) {
-    const promptMode = resolvePromptMode(card, mode);
+export function buildPrompt(card, mode, session = null) {
+    const multipleChoiceData = buildMultipleChoiceData(card, session);
+    const promptMode = resolvePromptMode(card, mode, multipleChoiceData);
 
     if (promptMode === "de-en") {
         return {
@@ -36,6 +46,25 @@ export function buildPrompt(card, mode) {
             correctAnswers: card.englishAnswers || [],
             imageData: "",
             expectsGermanAnswer: false,
+            responseKind: "text",
+            choiceOptions: [],
+        };
+    }
+
+    if (promptMode === "mc-de-en") {
+        if (!multipleChoiceData) {
+            return buildPrompt(card, "de-en", session);
+        }
+
+        return {
+            promptMode,
+            promptText: card.german,
+            correctAnswers: card.englishAnswers || [],
+            imageData: "",
+            expectsGermanAnswer: false,
+            responseKind: "choice",
+            choiceOptions: multipleChoiceData.choiceOptions,
+            selectedChoice: "",
         };
     }
 
@@ -49,6 +78,8 @@ export function buildPrompt(card, mode) {
             correctAnswers: [card.german],
             imageData: "",
             expectsGermanAnswer: true,
+            responseKind: "text",
+            choiceOptions: [],
         };
     }
 
@@ -59,6 +90,8 @@ export function buildPrompt(card, mode) {
             correctAnswers: [card.german],
             imageData: card.imageData || "",
             expectsGermanAnswer: true,
+            responseKind: "text",
+            choiceOptions: [],
         };
     }
 
@@ -80,6 +113,7 @@ export function submitStudyAnswer(session, input) {
         input,
         correctAnswers: prompt.correctAnswers,
         expectsGermanAnswer: prompt.expectsGermanAnswer,
+        allowLenientMatching: prompt.responseKind !== "choice",
     });
 
     session.answered = true;
@@ -102,7 +136,7 @@ export function isGermanAnswerMode(mode) {
     return mode === "en-de" || mode === "image-de";
 }
 
-function resolvePromptMode(card, mode) {
+function resolvePromptMode(card, mode, multipleChoiceData) {
     if (mode !== "random") {
         return mode;
     }
@@ -113,10 +147,290 @@ function resolvePromptMode(card, mode) {
         availableModes.push("image-de");
     }
 
+    if (multipleChoiceData) {
+        availableModes.push("mc-de-en");
+    }
+
     return availableModes[Math.floor(Math.random() * availableModes.length)];
 }
 
-function evaluateAnswer({ input, correctAnswers, expectsGermanAnswer }) {
+function buildCollectionMembershipMap(collections) {
+    const membershipByCardId = new Map();
+
+    for (const collection of collections || []) {
+        const collectionId = String(collection?.id || "").trim();
+
+        if (!collectionId) {
+            continue;
+        }
+
+        for (const cardId of collection?.cardIds || []) {
+            if (!membershipByCardId.has(cardId)) {
+                membershipByCardId.set(cardId, new Set());
+            }
+
+            membershipByCardId.get(cardId).add(collectionId);
+        }
+    }
+
+    return membershipByCardId;
+}
+
+function buildMultipleChoiceData(card, session) {
+    const correctAnswer = chooseMultipleChoiceCorrectAnswer(card);
+
+    if (!correctAnswer || !session || !Array.isArray(session.cards) || session.cards.length < MULTIPLE_CHOICE_OPTION_COUNT) {
+        return null;
+    }
+
+    const distractors = pickMultipleChoiceDistractors({
+        currentCard: card,
+        correctAnswer,
+        sessionCards: session.cards,
+        collectionMembershipByCardId: session.collectionMembershipByCardId,
+    });
+
+    if (distractors.length < MULTIPLE_CHOICE_OPTION_COUNT - 1) {
+        return null;
+    }
+
+    return {
+        choiceOptions: shuffle([
+            {
+                text: correctAnswer,
+                isCorrect: true,
+            },
+            ...distractors.slice(0, MULTIPLE_CHOICE_OPTION_COUNT - 1).map((text) => ({
+                text,
+                isCorrect: false,
+            })),
+        ]),
+    };
+}
+
+function chooseMultipleChoiceCorrectAnswer(card) {
+    const englishAnswers = (card?.englishAnswers || []).filter(Boolean);
+
+    if (englishAnswers.length === 0) {
+        return "";
+    }
+
+    return englishAnswers[Math.floor(Math.random() * englishAnswers.length)] || englishAnswers[0] || "";
+}
+
+function pickMultipleChoiceDistractors({
+    currentCard,
+    correctAnswer,
+    sessionCards,
+    collectionMembershipByCardId,
+}) {
+    const correctNormalized = normalizeForComparison(correctAnswer);
+    const currentCardCollectionIds = collectionMembershipByCardId?.get(currentCard?.id) || new Set();
+    const rankedCandidates = [];
+
+    for (const candidateCard of sessionCards || []) {
+        if (!candidateCard || candidateCard.id === currentCard?.id) {
+            continue;
+        }
+
+        const distractorAnswer = chooseBestDistractorAnswer(candidateCard, correctAnswer);
+        const distractorNormalized = normalizeForComparison(distractorAnswer);
+
+        if (!distractorNormalized || distractorNormalized === correctNormalized) {
+            continue;
+        }
+
+        rankedCandidates.push({
+            text: distractorAnswer,
+            normalized: distractorNormalized,
+            sameCollection: sharesCollection(
+                currentCardCollectionIds,
+                collectionMembershipByCardId?.get(candidateCard.id),
+            ),
+            similarityScore: scoreDistractorSimilarity(distractorAnswer, correctAnswer),
+            tieBreaker: Math.random(),
+        });
+    }
+
+    rankedCandidates.sort((left, right) => {
+        if (left.sameCollection !== right.sameCollection) {
+            return left.sameCollection ? -1 : 1;
+        }
+
+        if (left.similarityScore !== right.similarityScore) {
+            return right.similarityScore - left.similarityScore;
+        }
+
+        return left.tieBreaker - right.tieBreaker;
+    });
+
+    const chosenTexts = [];
+    const seenNormalizedValues = new Set([correctNormalized]);
+
+    for (const candidate of rankedCandidates) {
+        if (seenNormalizedValues.has(candidate.normalized)) {
+            continue;
+        }
+
+        chosenTexts.push(candidate.text);
+        seenNormalizedValues.add(candidate.normalized);
+
+        if (chosenTexts.length >= MULTIPLE_CHOICE_OPTION_COUNT - 1) {
+            break;
+        }
+    }
+
+    return chosenTexts;
+}
+
+function chooseBestDistractorAnswer(card, correctAnswer) {
+    const answers = (card?.englishAnswers || []).filter(Boolean);
+
+    if (answers.length === 0) {
+        return "";
+    }
+
+    let bestAnswer = answers[0];
+    let bestScore = Number.NEGATIVE_INFINITY;
+
+    for (const answer of answers) {
+        const score = scoreDistractorSimilarity(answer, correctAnswer);
+
+        if (score > bestScore) {
+            bestAnswer = answer;
+            bestScore = score;
+        }
+    }
+
+    return bestAnswer;
+}
+
+function sharesCollection(leftIds, rightIds) {
+    if (!leftIds || !rightIds || leftIds.size === 0 || rightIds.size === 0) {
+        return false;
+    }
+
+    for (const collectionId of leftIds) {
+        if (rightIds.has(collectionId)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function scoreDistractorSimilarity(candidate, correctAnswer) {
+    const candidateNormalized = normalizeForComparison(candidate).replace(/[^a-z0-9]/giu, "");
+    const correctNormalized = normalizeForComparison(correctAnswer).replace(/[^a-z0-9]/giu, "");
+
+    if (!candidateNormalized || !correctNormalized) {
+        return 0;
+    }
+
+    const candidateTokens = tokenizeForSimilarity(candidate);
+    const correctTokens = tokenizeForSimilarity(correctAnswer);
+    const candidateBigrams = buildNgrams(candidateNormalized, 2);
+    const correctBigrams = buildNgrams(correctNormalized, 2);
+    const sharedChars = countSharedUniqueCharacters(candidateNormalized, correctNormalized);
+    const sharedPrefixLength = countSharedPrefix(candidateNormalized, correctNormalized);
+    const sharedSuffixLength = countSharedSuffix(candidateNormalized, correctNormalized);
+    const lengthDelta = Math.abs(candidateNormalized.length - correctNormalized.length);
+
+    return (
+        overlapScore(candidateBigrams, correctBigrams) * 10
+        + overlapScore(candidateTokens, correctTokens) * 8
+        + sharedChars * 0.8
+        + sharedPrefixLength * 1.2
+        + sharedSuffixLength * 1
+        - lengthDelta * 0.4
+    );
+}
+
+function tokenizeForSimilarity(value) {
+    return normalizeForComparison(value)
+        .split(/[^\p{L}\p{N}]+/u)
+        .filter(Boolean);
+}
+
+function buildNgrams(value, size) {
+    const normalized = String(value || "");
+
+    if (!normalized) {
+        return [];
+    }
+
+    if (normalized.length <= size) {
+        return [normalized];
+    }
+
+    const grams = [];
+
+    for (let index = 0; index <= normalized.length - size; index += 1) {
+        grams.push(normalized.slice(index, index + size));
+    }
+
+    return grams;
+}
+
+function overlapScore(leftItems, rightItems) {
+    const leftSet = new Set(leftItems || []);
+    const rightSet = new Set(rightItems || []);
+
+    if (leftSet.size === 0 || rightSet.size === 0) {
+        return 0;
+    }
+
+    let overlapCount = 0;
+
+    for (const value of leftSet) {
+        if (rightSet.has(value)) {
+            overlapCount += 1;
+        }
+    }
+
+    return overlapCount / Math.max(leftSet.size, rightSet.size);
+}
+
+function countSharedUniqueCharacters(leftValue, rightValue) {
+    const leftChars = new Set(String(leftValue || ""));
+    const rightChars = new Set(String(rightValue || ""));
+    let count = 0;
+
+    for (const character of leftChars) {
+        if (rightChars.has(character)) {
+            count += 1;
+        }
+    }
+
+    return count;
+}
+
+function countSharedPrefix(leftValue, rightValue) {
+    const limit = Math.min(leftValue.length, rightValue.length);
+    let count = 0;
+
+    while (count < limit && leftValue[count] === rightValue[count]) {
+        count += 1;
+    }
+
+    return count;
+}
+
+function countSharedSuffix(leftValue, rightValue) {
+    const limit = Math.min(leftValue.length, rightValue.length);
+    let count = 0;
+
+    while (
+        count < limit
+        && leftValue[leftValue.length - 1 - count] === rightValue[rightValue.length - 1 - count]
+    ) {
+        count += 1;
+    }
+
+    return count;
+}
+
+function evaluateAnswer({ input, correctAnswers, expectsGermanAnswer, allowLenientMatching = true }) {
     const rawInput = String(input || "");
     const normalizedInput = normalizeBasic(rawInput);
 
@@ -128,6 +442,7 @@ function evaluateAnswer({ input, correctAnswers, expectsGermanAnswer }) {
             normalizedInput,
             correctAnswer: answer,
             expectsGermanAnswer,
+            allowLenientMatching,
         });
 
         if (isBetterMatch(candidate, bestResult)) {
@@ -147,6 +462,7 @@ function evaluateAgainstSingleAnswer({
     normalizedInput,
     correctAnswer,
     expectsGermanAnswer,
+    allowLenientMatching,
 }) {
     const normalizedAnswer = normalizeBasic(correctAnswer);
 
@@ -163,6 +479,10 @@ function evaluateAgainstSingleAnswer({
             note: "",
             matchedAnswer: correctAnswer,
         };
+    }
+
+    if (!allowLenientMatching) {
+        return buildWrongResult([correctAnswer]);
     }
 
     const canonicalInput = normalizeForComparison(input);
@@ -356,6 +676,11 @@ function isSingleEditAway(source, target) {
     }
 
     return true;
+}
+
+function toPositiveIntegerOrNull(value) {
+    const numericValue = Number.parseInt(String(value || "").trim(), 10);
+    return Number.isInteger(numericValue) && numericValue > 0 ? numericValue : null;
 }
 
 function shuffle(items) {
