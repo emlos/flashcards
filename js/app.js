@@ -1121,7 +1121,7 @@ function recordCardStudyResult(cardId, result) {
     stats.timesSeen += 1;
     stats.lastSeenAt = now;
 
-    if ((result?.pointsAwarded || 0) >= 1) {
+    if ((result?.pointsAwarded || 0) > 0) {
         stats.timesCorrect += 1;
         stats.lastCorrectAt = now;
     }

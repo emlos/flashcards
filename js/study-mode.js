@@ -307,18 +307,30 @@ function isSingleEditAway(source, target) {
     }
 
     if (source.length === target.length) {
-        let differences = 0;
+        const mismatchIndexes = [];
 
         for (let index = 0; index < source.length; index += 1) {
             if (source[index] !== target[index]) {
-                differences += 1;
-                if (differences > 1) {
+                mismatchIndexes.push(index);
+                if (mismatchIndexes.length > 2) {
                     return false;
                 }
             }
         }
 
-        return differences === 1;
+        if (mismatchIndexes.length === 1) {
+            return true;
+        }
+
+        if (mismatchIndexes.length === 2) {
+            const [firstIndex, secondIndex] = mismatchIndexes;
+
+            return secondIndex === firstIndex + 1
+                && source[firstIndex] === target[secondIndex]
+                && source[secondIndex] === target[firstIndex];
+        }
+
+        return false;
     }
 
     const shorter = source.length < target.length ? source : target;
