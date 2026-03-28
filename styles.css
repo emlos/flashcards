@@ -610,6 +610,14 @@ pre {
   .item-row-side {
     align-items: flex-start;
   }
+
+  .modal-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .modal-actions > button {
+    flex-basis: 100%;
+  }
 }
 
 .app-status-message {
@@ -633,4 +641,91 @@ pre {
 .stat-score {
   font-weight: bold;
   font-size: 1.05rem;
+}
+
+
+.study-answer-form-complete {
+  opacity: 0.78;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 24, 39, 0.62);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 1000;
+}
+
+.modal-card {
+  width: min(100%, 34rem);
+  max-height: min(100vh - 2rem, 40rem);
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1rem;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.2);
+}
+
+.modal-header-row {
+  margin-bottom: 0.35rem;
+}
+
+.modal-header-row h3 {
+  margin: 0;
+}
+
+.modal-close-button {
+  flex: 0 0 auto;
+}
+
+.modal-summary {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.modal-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.modal-summary-item {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-alt);
+  padding: 0.75rem;
+}
+
+.modal-summary-label {
+  display: block;
+  color: var(--muted);
+  margin-bottom: 0.2rem;
+}
+
+.modal-summary-value {
+  font-size: 1.2rem;
+  font-weight: bold;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.modal-actions > button {
+  flex: 1 1 12rem;
+}
+
+.modal-footnote {
+  margin-bottom: 0;
+}
+
+body.modal-open {
+  overflow: hidden;
 }

@@ -210,7 +210,7 @@
 
           <form id="study-answer-form" class="inline-form">
             <input type="text" id="study-answer" autocomplete="off" required />
-            <button type="submit">Check</button>
+            <button id="study-check-button" type="submit">Check</button>
           </form>
 
           <div id="study-german-characters" class="study-character-tools hidden" aria-label="German characters">
@@ -312,6 +312,27 @@ COLLECTION\tcollection-id\tencodedName\tcardId1,cardId2,cardId3\tencodedColor</p
         <div id="import-export-message" class="status-message"></div>
       </section>
     </main>
+  </div>
+
+
+
+  <div id="backup-import-modal" class="modal-overlay hidden" role="dialog" aria-modal="true"
+    aria-labelledby="backup-import-modal-title" aria-describedby="backup-import-modal-description">
+    <div class="modal-card">
+      <div class="section-row modal-header-row">
+        <h3 id="backup-import-modal-title">Import backup</h3>
+        <button id="backup-import-cancel-button" type="button" class="secondary modal-close-button"
+          aria-label="Cancel backup import">Cancel</button>
+      </div>
+      <p id="backup-import-modal-description" class="muted">Choose how this backup should be applied.</p>
+      <div id="backup-import-modal-summary" class="modal-summary"></div>
+      <div id="backup-import-modal-warnings" class="status-message error hidden"></div>
+      <div class="modal-actions">
+        <button id="backup-import-merge-button" type="button">Merge into current data</button>
+        <button id="backup-import-replace-button" type="button" class="danger">Replace current data</button>
+      </div>
+      <p class="muted modal-footnote">Merge keeps your current data and adds what it can. Replace overwrites everything in the app with the backup.</p>
+    </div>
   </div>
 
   <script type="module" src="js/app.js"></script>

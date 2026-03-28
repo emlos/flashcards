@@ -53,6 +53,8 @@ const SEARCH_INPUT_DEBOUNCE_MS = 120;
 let persistQueue = Promise.resolve(false);
 let flashcardRenderDebounceId = 0;
 let collectionEditorRenderDebounceId = 0;
+let pendingBackupImportResolver = null;
+let lastFocusedElementBeforeBackupImportModal = null;
 
 const elements = {
     appStatusMessage: document.getElementById("app-status-message"),
@@ -105,6 +107,7 @@ const elements = {
     studyImage: document.getElementById("study-image"),
     studyAnswerForm: document.getElementById("study-answer-form"),
     studyAnswer: document.getElementById("study-answer"),
+    studyCheckButton: document.getElementById("study-check-button"),
     studyGermanCharacters: document.getElementById("study-german-characters"),
     studyFeedback: document.getElementById("study-feedback"),
     studyFeedbackNote: document.getElementById("study-feedback-note"),
@@ -126,6 +129,12 @@ const elements = {
     exportButton: document.getElementById("export-button"),
     deleteAllButton: document.getElementById("delete-all-button"),
     importExportMessage: document.getElementById("import-export-message"),
+    backupImportModal: document.getElementById("backup-import-modal"),
+    backupImportModalSummary: document.getElementById("backup-import-modal-summary"),
+    backupImportModalWarnings: document.getElementById("backup-import-modal-warnings"),
+    backupImportMergeButton: document.getElementById("backup-import-merge-button"),
+    backupImportReplaceButton: document.getElementById("backup-import-replace-button"),
+    backupImportCancelButton: document.getElementById("backup-import-cancel-button"),
 };
 
 applyUiPrefsToControls();
@@ -188,6 +197,11 @@ function bindEvents() {
     elements.studyGermanCharacters.addEventListener("click", onStudyGermanCharacterClick);
     elements.studyNextButton.addEventListener("click", onStudyNext);
     elements.studyEndButton.addEventListener("click", endStudySession);
+    elements.backupImportMergeButton.addEventListener("click", () => closeBackupImportModal("merge"));
+    elements.backupImportReplaceButton.addEventListener("click", () => closeBackupImportModal("replace"));
+    elements.backupImportCancelButton.addEventListener("click", () => closeBackupImportModal(null));
+    elements.backupImportModal.addEventListener("click", onBackupImportModalClick);
+    elements.backupImportModal.addEventListener("keydown", onBackupImportModalKeyDown);
     elements.studyResetButton.addEventListener("click", resetStudyView);
 
     elements.bulkImportButton.addEventListener("click", onBulkImport);
@@ -460,7 +474,12 @@ function onStudySetupSubmit(event) {
 async function onStudyAnswerSubmit(event) {
     event.preventDefault();
 
-    if (!studySession || studySession.answered) {
+    if (!studySession) {
+        return;
+    }
+
+    if (studySession.answered) {
+        onStudyNext();
         return;
     }
 
@@ -480,8 +499,11 @@ async function onStudyAnswerSubmit(event) {
     elements.studyFeedback.textContent = result.message;
     elements.studyFeedbackNote.textContent = result.note;
     elements.studyFeedback.className = `study-feedback ${result.feedbackClass}`;
-    elements.studyNextButton.classList.remove("hidden");
     elements.studyAnswer.disabled = true;
+    elements.studyCheckButton.disabled = true;
+    elements.studyAnswerForm.classList.add("study-answer-form-complete");
+    elements.studyNextButton.classList.remove("hidden");
+    elements.studyNextButton.focus();
 
     await persist();
     renderStudyLiveInsights();
@@ -520,6 +542,8 @@ function resetStudyView() {
     elements.studyFeedback.className = "study-feedback";
     elements.studyAnswerForm.reset();
     elements.studyAnswer.disabled = false;
+    elements.studyCheckButton.disabled = false;
+    elements.studyAnswerForm.classList.remove("study-answer-form-complete");
     elements.studyNextButton.classList.add("hidden");
     elements.studyImageWrapper.classList.add("hidden");
     elements.studyGermanCharacters.classList.add("hidden");
@@ -587,7 +611,7 @@ async function onBackupImport() {
     try {
         const text = await file.text();
         const { state: importedState, issues } = parseBackupText(text);
-        const importMode = chooseBackupImportMode(importedState, issues);
+        const importMode = await chooseBackupImportMode(importedState, issues);
 
         if (!importMode) {
             showImportExportMessage("Backup import cancelled.", false);
@@ -1102,6 +1126,8 @@ function renderStudyQuestion() {
     elements.studyPrompt.textContent = prompt.promptText;
     elements.studyAnswerForm.reset();
     elements.studyAnswer.disabled = false;
+    elements.studyCheckButton.disabled = false;
+    elements.studyAnswerForm.classList.remove("study-answer-form-complete");
     elements.studyAnswer.focus();
     elements.studyFeedback.textContent = "";
     elements.studyFeedbackNote.textContent = "";
@@ -1530,30 +1556,7 @@ async function mergeBackupStateIntoCurrentState(importedState) {
 }
 
 function chooseBackupImportMode(importedState, issues) {
-    const totalCards = importedState.flashcards?.length || 0;
-    const totalCollections = importedState.collections?.length || 0;
-    const totalSessions = importedState.studyHistory?.length || 0;
-    const totalCardStats = Object.keys(importedState.cardStats || {}).length;
-    const issueSummary =
-        issues.length > 0
-            ? `
-
-Warnings: ${formatImportIssuesSummary(issues)}`
-            : "";
-
-    const response = window.prompt(
-        `Backup ready to import. It contains ${totalCards} flashcard(s), ${totalCollections} collection(s), ${totalSessions} saved session(s), and stats for ${totalCardStats} card(s).
-
-Type "merge" to merge it into your current data, type "replace" to overwrite all current data, or leave blank to cancel.${issueSummary}`,
-        "merge",
-    );
-    const normalizedResponse = normalizeWord(response);
-
-    if (normalizedResponse === "merge" || normalizedResponse === "replace") {
-        return normalizedResponse;
-    }
-
-    return null;
+    return openBackupImportModal(importedState, issues);
 }
 
 function finalizeImportState({
@@ -1580,6 +1583,128 @@ function finalizeImportState({
     resetStudyView();
     setCollectionColorInputDefault();
     renderAll();
+}
+
+function openBackupImportModal(importedState, issues) {
+    if (pendingBackupImportResolver) {
+        closeBackupImportModal(null);
+    }
+
+    const totalCards = importedState.flashcards?.length || 0;
+    const totalCollections = importedState.collections?.length || 0;
+    const totalSessions = importedState.studyHistory?.length || 0;
+    const totalCardStats = Object.keys(importedState.cardStats || {}).length;
+
+    elements.backupImportModalSummary.innerHTML = `
+      <div class="modal-summary-grid">
+        <div class="modal-summary-item">
+          <span class="modal-summary-label">Flashcards</span>
+          <div class="modal-summary-value">${escapeHtml(String(totalCards))}</div>
+        </div>
+        <div class="modal-summary-item">
+          <span class="modal-summary-label">Collections</span>
+          <div class="modal-summary-value">${escapeHtml(String(totalCollections))}</div>
+        </div>
+        <div class="modal-summary-item">
+          <span class="modal-summary-label">Saved sessions</span>
+          <div class="modal-summary-value">${escapeHtml(String(totalSessions))}</div>
+        </div>
+        <div class="modal-summary-item">
+          <span class="modal-summary-label">Cards with stats</span>
+          <div class="modal-summary-value">${escapeHtml(String(totalCardStats))}</div>
+        </div>
+      </div>
+    `;
+
+    if (issues.length > 0) {
+        elements.backupImportModalWarnings.textContent = formatImportIssuesSummary(issues);
+        elements.backupImportModalWarnings.classList.remove("hidden");
+    } else {
+        elements.backupImportModalWarnings.textContent = "";
+        elements.backupImportModalWarnings.classList.add("hidden");
+    }
+
+    lastFocusedElementBeforeBackupImportModal = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    document.body.classList.add("modal-open");
+    elements.backupImportModal.classList.remove("hidden");
+
+    return new Promise((resolve) => {
+        pendingBackupImportResolver = resolve;
+        window.requestAnimationFrame(() => {
+            elements.backupImportMergeButton.focus();
+        });
+    });
+}
+
+function closeBackupImportModal(selection) {
+    if (!pendingBackupImportResolver) {
+        return;
+    }
+
+    const resolver = pendingBackupImportResolver;
+    pendingBackupImportResolver = null;
+
+    elements.backupImportModal.classList.add("hidden");
+    elements.backupImportModalWarnings.textContent = "";
+    elements.backupImportModalWarnings.classList.add("hidden");
+    elements.backupImportModalSummary.innerHTML = "";
+    document.body.classList.remove("modal-open");
+
+    if (lastFocusedElementBeforeBackupImportModal?.focus) {
+        lastFocusedElementBeforeBackupImportModal.focus();
+    }
+    lastFocusedElementBeforeBackupImportModal = null;
+
+    resolver(selection === "merge" || selection === "replace" ? selection : null);
+}
+
+function onBackupImportModalClick(event) {
+    if (event.target === elements.backupImportModal) {
+        closeBackupImportModal(null);
+    }
+}
+
+function onBackupImportModalKeyDown(event) {
+    if (elements.backupImportModal.classList.contains("hidden")) {
+        return;
+    }
+
+    if (event.key === "Escape") {
+        event.preventDefault();
+        closeBackupImportModal(null);
+        return;
+    }
+
+    if (event.key !== "Tab") {
+        return;
+    }
+
+    const focusableElements = [
+        elements.backupImportMergeButton,
+        elements.backupImportReplaceButton,
+        elements.backupImportCancelButton,
+    ].filter((element) => element && !element.disabled);
+
+    if (focusableElements.length === 0) {
+        return;
+    }
+
+    const firstElement = focusableElements[0];
+    const lastElement = focusableElements[focusableElements.length - 1];
+    const activeElement = document.activeElement;
+
+    if (event.shiftKey && activeElement === firstElement) {
+        event.preventDefault();
+        lastElement.focus();
+        return;
+    }
+
+    if (!event.shiftKey && activeElement === lastElement) {
+        event.preventDefault();
+        firstElement.focus();
+    }
 }
 
 function formatImportIssuesSummary(issues) {
