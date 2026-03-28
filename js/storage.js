@@ -603,11 +603,13 @@ function sanitizeIsoDate(value) {
 }
 
 function sanitizeStudyMode(value) {
-    return ["de-en", "en-de", "image-de", "random"].includes(value) ? value : "de-en";
+    return ["de-en", "en-de", "image-de", "mc-de-en", "random"].includes(value)
+        ? value
+        : "de-en";
 }
 
 function sanitizeTabName(value) {
-    return ["flashcards", "collections", "study", "import-export"].includes(value)
+    return ["flashcards", "collections", "study", "stats", "import-export"].includes(value)
         ? value
         : "flashcards";
 }

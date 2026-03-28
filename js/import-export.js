@@ -58,6 +58,12 @@ function parseNonNegativeNumber(value) {
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 }
 
+function sanitizeStudyMode(value) {
+    return ["de-en", "en-de", "image-de", "mc-de-en", "random"].includes(value)
+        ? value
+        : "de-en";
+}
+
 export function parseBulkWords(text) {
     const entries = [];
     const issues = [];
@@ -261,7 +267,7 @@ export function parseBackupText(text) {
                 finishedAt: decodeField(parts[2]),
                 collectionLabel: decodeField(parts[3]),
                 collectionIds: parseCollectionIdsField(parts[4]),
-                mode: parts[5],
+                mode: sanitizeStudyMode(parts[5]),
                 score: parseNonNegativeNumber(parts[6]),
                 answeredCount: parsePositiveInteger(parts[7]),
                 totalCards: parsePositiveInteger(parts[8]),
