@@ -23,8 +23,7 @@ german-english-flashcards/
 └── js/
     ├── app.js
     ├── import-export.js
-    ├── storage.js
-    └── study.js
+    └── storage.js
 ```
 
 ## How to run
