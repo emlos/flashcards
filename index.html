@@ -37,14 +37,14 @@
 
         <div class="card form-card">
           <h3>Add Flashcard</h3>
-          <form id="flashcard-form" class="stack-form">
+          <form id="flashcard-form" class="stack-form" autocomplete="off">
             <label>
               German
-              <input type="text" id="flashcard-german" required />
+              <input type="text" id="flashcard-german" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" required />
             </label>
             <label>
               English meaning(s)
-              <input type="text" id="flashcard-english" placeholder="dog; hound" required />
+              <input type="text" id="flashcard-english" placeholder="dog; hound" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" required />
             </label>
             <label>
               Optional image
@@ -82,8 +82,8 @@
 
         <div class="card form-card">
           <h3>Create Collection</h3>
-          <form id="collection-form" class="inline-form collection-form">
-            <input type="text" id="collection-name" placeholder="Collection name" required />
+          <form id="collection-form" class="inline-form collection-form" autocomplete="off">
+            <input type="text" id="collection-name" placeholder="Collection name" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" required />
             <label class="compact-label">
               Color
               <input type="color" id="collection-color" value="#4f46e5" />
@@ -140,14 +140,14 @@
               <div class="card nested-card">
                 <details>
                   <summary>Create Flashcard in This Collection</summary>
-                  <form id="collection-flashcard-form" class="stack-form">
+                  <form id="collection-flashcard-form" class="stack-form" autocomplete="off">
                     <label>
                       German
-                      <input type="text" id="collection-flashcard-german" required />
+                      <input type="text" id="collection-flashcard-german" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" required />
                     </label>
                     <label>
                       English meaning(s)
-                      <input type="text" id="collection-flashcard-english" placeholder="dog; hound" required />
+                      <input type="text" id="collection-flashcard-english" placeholder="dog; hound" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" required />
                     </label>
                     <label>
                       Optional image
