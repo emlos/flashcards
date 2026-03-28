@@ -58,10 +58,19 @@ function parseNonNegativeNumber(value) {
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 }
 
+function parseNonNegativeInteger(value) {
+    const parsed = Number.parseInt(String(value || "").trim(), 10);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
 function sanitizeStudyMode(value) {
     return ["de-en", "en-de", "image-de", "mc-de-en", "random"].includes(value)
         ? value
         : "de-en";
+}
+
+function sanitizeStudySessionType(value) {
+    return value === "srs" ? "srs" : "free";
 }
 
 export function parseBulkWords(text) {
@@ -154,6 +163,9 @@ export function exportBackupText(state) {
                 String(stats?.timesCorrect || 0),
                 encodeField(stats?.lastSeenAt || ""),
                 encodeField(stats?.lastCorrectAt || ""),
+                String(stats?.srsInterval || 0),
+                String(stats?.srsEaseFactor || 2.5),
+                encodeField(stats?.srsDueDate || ""),
             ].join("\t"),
         );
     }
@@ -170,6 +182,7 @@ export function exportBackupText(state) {
                 String(session.score || 0),
                 String(session.answeredCount || 0),
                 String(session.totalCards || 0),
+                sanitizeStudySessionType(session.sessionType),
             ].join("\t"),
         );
     }
@@ -249,6 +262,9 @@ export function parseBackupText(text) {
                 timesCorrect: parsePositiveInteger(parts[3]),
                 lastSeenAt: parts[4] ? decodeField(parts[4]) : "",
                 lastCorrectAt: parts[5] ? decodeField(parts[5]) : "",
+                srsInterval: parseNonNegativeInteger(parts[6]),
+                srsEaseFactor: parts[7] ? parseNonNegativeNumber(parts[7]) : 2.5,
+                srsDueDate: parts[8] ? decodeField(parts[8]) : "",
             };
             return;
         }
@@ -271,6 +287,7 @@ export function parseBackupText(text) {
                 score: parseNonNegativeNumber(parts[6]),
                 answeredCount: parsePositiveInteger(parts[7]),
                 totalCards: parsePositiveInteger(parts[8]),
+                sessionType: sanitizeStudySessionType(parts[9]),
             });
             return;
         }

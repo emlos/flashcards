@@ -62,6 +62,54 @@ export function formatStudyModeLabel(mode) {
     return labels[mode] || mode;
 }
 
+export function formatStudySessionTypeLabel(sessionType) {
+    const labels = {
+        free: "Free practice",
+        srs: "SRS review",
+    };
+
+    return labels[sessionType] || "Free practice";
+}
+
+export function formatSrsIntervalLabel(intervalDays) {
+    const interval = Number(intervalDays) || 0;
+
+    if (interval <= 0) {
+        return "New";
+    }
+
+    if (interval === 1) {
+        return "1 day";
+    }
+
+    return `${interval} days`;
+}
+
+export function formatSrsDueDateLabel(dueDateIso, todayIso = getLocalIsoDate()) {
+    const dueDate = String(dueDateIso || "").trim();
+
+    if (!dueDate) {
+        return "New";
+    }
+
+    if (dueDate < todayIso) {
+        const overdueDays = differenceInLocalDateDays(dueDate, todayIso);
+        return overdueDays === 1 ? "Overdue by 1 day" : `Overdue by ${overdueDays} days`;
+    }
+
+    if (dueDate === todayIso) {
+        return "Due today";
+    }
+
+    const daysUntilDue = differenceInLocalDateDays(todayIso, dueDate);
+
+    if (daysUntilDue === 1) {
+        return "Due tomorrow";
+    }
+
+    return `Due in ${daysUntilDue} days`;
+}
+
 export function formatStudyScore(value) {
     return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
@@ -256,6 +304,51 @@ export function parseStudyCardLimit(value) {
     }
 
     return parsed;
+}
+
+export function parseSrsNewCardsPerDay(value, fallback = 20) {
+    const normalized = String(value ?? "").trim();
+
+    if (!normalized) {
+        return fallback;
+    }
+
+    const parsed = Number.parseInt(normalized, 10);
+
+    if (!Number.isInteger(parsed) || parsed < 1) {
+        return Number.NaN;
+    }
+
+    return parsed;
+}
+
+export function getLocalIsoDate(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+}
+
+export function differenceInLocalDateDays(startIso, endIso) {
+    const start = parseLocalDate(startIso);
+    const end = parseLocalDate(endIso);
+
+    if (!start || !end) {
+        return 0;
+    }
+
+    return Math.max(0, Math.round((end.getTime() - start.getTime()) / 86400000));
+}
+
+function parseLocalDate(value) {
+    const iso = String(value || "").trim();
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+        return null;
+    }
+
+    const [year, month, day] = iso.split("-").map((part) => Number.parseInt(part, 10));
+    return new Date(year, month - 1, day);
 }
 
 export function getCollectionColor(collection) {

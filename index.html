@@ -17,7 +17,7 @@
       <nav class="tab-nav">
         <button class="tab-button active" data-tab="flashcards">Flashcards</button>
         <button class="tab-button" data-tab="collections">Collections</button>
-        <button class="tab-button" data-tab="study">Study</button>
+        <button class="tab-button tab-button-with-badge" data-tab="study">Study <span id="study-tab-due-badge" class="tab-badge hidden">0</span></button>
         <button class="tab-button" data-tab="stats">Stats</button>
         <button class="tab-button" data-tab="import-export">Import / Export</button>
       </nav>
@@ -169,21 +169,44 @@
       <section class="tab-panel" id="tab-study">
         <div class="panel-header">
           <h2>Study</h2>
-          <p>Pick a collection and mode, then work through the cards.</p>
+          <p>Switch between free practice and your daily due reviews.</p>
         </div>
 
         <div class="card form-card">
-          <h3>Start Session</h3>
+          <div class="section-row study-setup-header-row">
+            <h3>Start Session</h3>
+            <span id="study-due-badge" class="tab-badge hidden">0</span>
+          </div>
           <form id="study-setup-form" class="stack-form">
-            <div class="stack-field">
-              <span>Collections</span>
-              <details id="study-collection-picker" class="multiselect">
-                <summary id="study-collection-summary" class="multiselect-summary">All flashcards</summary>
-                <div id="study-collection-options" class="multiselect-options"></div>
-              </details>
+            <div id="study-session-type-toggle" class="segmented-toggle" role="group" aria-label="Study type">
+              <button type="button" class="segmented-toggle-button active" data-study-session-type="free" aria-pressed="true">Free practice</button>
+              <button type="button" class="segmented-toggle-button" data-study-session-type="srs" aria-pressed="false">Due for review <span id="study-session-type-due-count" class="tab-badge hidden">0</span></button>
             </div>
+
+            <div id="study-free-fields" class="stack-form">
+              <div class="stack-field">
+                <span>Collections</span>
+                <details id="study-collection-picker" class="multiselect">
+                  <summary id="study-collection-summary" class="multiselect-summary">All flashcards</summary>
+                  <div id="study-collection-options" class="multiselect-options"></div>
+                </details>
+              </div>
+              <label>
+                Maximum cards (optional)
+                <input type="number" id="study-card-limit" min="1" step="1" placeholder="All available cards" />
+              </label>
+            </div>
+
+            <div id="study-srs-fields" class="stack-form hidden">
+              <label>
+                New cards per day
+                <input type="number" id="study-srs-new-card-limit" min="1" step="1" value="20" />
+              </label>
+              <p class="muted">SRS only shows new or due cards. Free practice never changes the SRS schedule.</p>
+            </div>
+
             <label>
-              Mode
+              Prompt mode
               <select id="study-mode" required>
                 <option value="de-en">German → English</option>
                 <option value="mc-de-en">Multiple choice</option>
@@ -192,13 +215,10 @@
                 <option value="random">Random mix</option>
               </select>
             </label>
-            <label>
-              Maximum cards (optional)
-              <input type="number" id="study-card-limit" min="1" step="1" placeholder="All available cards" />
-            </label>
-            <button type="submit">Start study session</button>
+            <button id="study-start-button" type="submit">Start free practice</button>
           </form>
           <p id="study-setup-message" class="muted"></p>
+          <div id="study-srs-empty-state" class="empty-state hidden">All caught up — come back tomorrow.</div>
         </div>
 
         <div id="study-session" class="card hidden">

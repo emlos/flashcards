@@ -1,7 +1,9 @@
 import {
+    DEFAULT_SRS_NEW_CARDS_PER_DAY,
     GERMAN_SPEECH_LANGUAGE,
     PAGINATION_PAGE_SIZES,
     STUDY_ALL_COLLECTION_ID,
+    STUDY_SESSION_TYPES,
 } from "./constants.js";
 import {
     createEmptyStateRow,
@@ -10,11 +12,22 @@ import {
     formatRelativeDateLabel,
     formatSessionCompletionLabel,
     formatSessionTimestamp,
+    formatSrsDueDateLabel,
+    formatSrsIntervalLabel,
     formatStudyModeLabel,
     formatStudyScore,
+    formatStudySessionTypeLabel,
     getEffectiveStudyCardCount,
+    getLocalIsoDate,
+    parseSrsNewCardsPerDay,
     parseStudyCardLimit,
 } from "./shared-utils.js";
+import {
+    applySm2Review,
+    buildSrsStudyQueue,
+    getSrsDueSummary,
+    mapStudyResultToSrsRating,
+} from "./study-mode.js";
 
 function createStateProxy(getState) {
     return new Proxy(
@@ -37,6 +50,10 @@ export function createStudyUi(context) {
         getState,
         getStudySession,
         setStudySession,
+        getStudySessionType,
+        setStudySessionType,
+        getSrsNewCardsPerDay,
+        setSrsNewCardsPerDay,
         getSelectedStudyCollectionIds,
         setSelectedStudyCollectionIds,
         getCurrentPrompt,
@@ -49,6 +66,7 @@ export function createStudyUi(context) {
 
     const state = createStateProxy(getState);
     let hasBoundSpeechSynthesisEvents = false;
+    const defaultDocumentTitle = document.title;
 
     function renderStudySetup() {
         sanitizeStudyCollectionSelection();
@@ -83,8 +101,119 @@ export function createStudyUi(context) {
             elements.studyCollectionOptions.appendChild(empty);
         }
 
+        if (elements.studySrsNewCardLimit) {
+            elements.studySrsNewCardLimit.value = getSrsNewCardsPerDay();
+        }
+
         elements.studyCollectionSummary.textContent = getStudyCollectionSummaryText();
+        renderStudySessionTypeControls();
+        renderStudySetupFieldsVisibility();
+        updateStudyDueCountUi();
         renderStudyModeAvailability();
+        renderStudyStartButton();
+        renderStudySrsStatusMessage();
+    }
+
+    function renderStudySessionTypeControls() {
+        const dueSummary = getSrsDueSummaryForToday();
+        const sessionType = getStudySessionType();
+
+        (elements.studySessionTypeButtons || []).forEach((button) => {
+            const buttonType = button.dataset.studySessionType || STUDY_SESSION_TYPES.free;
+            const isActive = buttonType === sessionType;
+            button.classList.toggle("active", isActive);
+            button.setAttribute("aria-pressed", isActive ? "true" : "false");
+        });
+
+        if (elements.studySessionTypeDueCount) {
+            elements.studySessionTypeDueCount.textContent = String(dueSummary.dueCount);
+            elements.studySessionTypeDueCount.classList.toggle("hidden", dueSummary.dueCount <= 0);
+        }
+    }
+
+    function renderStudySetupFieldsVisibility() {
+        const isSrs = getStudySessionType() === STUDY_SESSION_TYPES.srs;
+
+        elements.studyFreeFields?.classList.toggle("hidden", isSrs);
+        elements.studySrsFields?.classList.toggle("hidden", !isSrs);
+        elements.studySrsEmptyState?.classList.add("hidden");
+    }
+
+    function updateStudyDueCountUi() {
+        const dueSummary = getSrsDueSummaryForToday();
+        const dueCount = dueSummary.dueCount;
+        const badgeText = String(dueCount);
+
+        if (elements.studyTabDueBadge) {
+            elements.studyTabDueBadge.textContent = badgeText;
+            elements.studyTabDueBadge.classList.toggle("hidden", dueCount <= 0);
+        }
+
+        if (elements.studyDueBadge) {
+            elements.studyDueBadge.textContent = badgeText;
+            elements.studyDueBadge.classList.toggle("hidden", dueCount <= 0);
+        }
+
+        document.title = dueCount > 0 ? `(${dueCount}) ${defaultDocumentTitle}` : defaultDocumentTitle;
+    }
+
+    function renderStudyStartButton() {
+        if (!elements.studyStartButton) {
+            return;
+        }
+
+        const sessionType = getStudySessionType();
+        const dueSummary = getSrsDueSummaryForToday();
+        const isSrs = sessionType === STUDY_SESSION_TYPES.srs;
+        const canStart = !isSrs || dueSummary.dueCount > 0;
+
+        elements.studyStartButton.textContent = isSrs ? "Start due review" : "Start free practice";
+        elements.studyStartButton.disabled = !canStart;
+    }
+
+    function renderStudySrsStatusMessage() {
+        const isSrs = getStudySessionType() === STUDY_SESSION_TYPES.srs;
+        const dueSummary = getSrsDueSummaryForToday();
+
+        if (!isSrs) {
+            if (elements.studySrsEmptyState) {
+                elements.studySrsEmptyState.classList.add("hidden");
+            }
+            return;
+        }
+
+        if (dueSummary.dueCount <= 0) {
+            if (elements.studySrsEmptyState) {
+                elements.studySrsEmptyState.textContent = "All caught up — come back tomorrow.";
+                elements.studySrsEmptyState.classList.remove("hidden");
+            }
+            return;
+        }
+
+        if (elements.studySrsEmptyState) {
+            elements.studySrsEmptyState.classList.add("hidden");
+        }
+    }
+
+    function getSrsDueSummaryForToday() {
+        return getSrsDueSummary(state.flashcards, state.cardStats, {
+            maxNewCards: getParsedSrsNewCardsPerDay(),
+        });
+    }
+
+    function getSrsStudyCardsForSession() {
+        return buildSrsStudyQueue(state.flashcards, state.cardStats, {
+            maxNewCards: getParsedSrsNewCardsPerDay(),
+        });
+    }
+
+    function getParsedSrsNewCardsPerDay() {
+        const parsed = parseSrsNewCardsPerDay(
+            getSrsNewCardsPerDay(),
+            DEFAULT_SRS_NEW_CARDS_PER_DAY,
+        );
+
+        return Number.isNaN(parsed) ? DEFAULT_SRS_NEW_CARDS_PER_DAY : parsed;
     }
 
     function renderStudyInsights() {
@@ -129,7 +258,7 @@ export function createStudyUi(context) {
             main.innerHTML = `
       <div class="item-title">${escapeHtml(entry.collectionLabel || "All flashcards")}</div>
       <div class="item-subtitle">${escapeHtml(formatSessionTimestamp(entry.finishedAt))}</div>
-      <div class="item-tags">${escapeHtml(formatStudyModeLabel(entry.mode))} · Answered ${entry.answeredCount}/${entry.totalCards}</div>
+      <div class="item-tags">${escapeHtml(formatStudySessionTypeLabel(entry.sessionType))} · ${escapeHtml(formatStudyModeLabel(entry.mode))} · Answered ${entry.answeredCount}/${entry.totalCards}</div>
     `;
 
             const side = document.createElement("div");
@@ -257,14 +386,14 @@ export function createStudyUi(context) {
             main.innerHTML = `
       <div class="item-title">${escapeHtml(card.german)}</div>
       <div class="item-subtitle">${escapeHtml((card.englishAnswers || []).join(", "))}</div>
-      <div class="item-tags">Seen ${stats.timesSeen} · Correct ${stats.timesCorrect}</div>
+      <div class="item-tags">Seen ${stats.timesSeen} · Correct ${stats.timesCorrect} · SRS ${escapeHtml(formatSrsDueDateLabel(stats.srsDueDate, getLocalIsoDate()))}</div>
     `;
 
             const side = document.createElement("div");
             side.className = "item-row-side stat-side";
             side.innerHTML = `
       <div class="stat-score">${escapeHtml(formatAccuracy(stats.timesCorrect, stats.timesSeen))}</div>
-      <div class="item-subtitle">${escapeHtml(stats.lastSeenAt ? formatSessionTimestamp(stats.lastSeenAt) : "Never")}</div>
+      <div class="item-subtitle">${escapeHtml(`Interval ${formatSrsIntervalLabel(stats.srsInterval)} · ${stats.lastSeenAt ? formatSessionTimestamp(stats.lastSeenAt) : "Never reviewed"}`)}</div>
     `;
 
             row.append(main, side);
@@ -382,6 +511,18 @@ export function createStudyUi(context) {
         const total = studySession?.cards.length || 0;
         const score = studySession?.score || 0;
         const answeredCount = studySession?.answeredCount || 0;
+
+        if (studySession?.sessionType === STUDY_SESSION_TYPES.srs) {
+            const completionNote =
+                answeredCount < total ? ` You reviewed ${answeredCount} of ${total} due card(s).` : "";
+            const caughtUpNote =
+                answeredCount >= total && getSrsDueSummaryForToday().dueCount === 0
+                    ? " All caught up — come back tomorrow."
+                    : "";
+            elements.studyResultText.textContent = `You finished ${answeredCount} SRS review${answeredCount === 1 ? "" : "s"}.${completionNote}${caughtUpNote}`;
+            return;
+        }
+
         const completionNote =
             answeredCount < total ? ` You answered ${answeredCount} of ${total} card(s).` : "";
         elements.studyResultText.textContent = `You scored ${formatStudyScore(score)} out of ${formatStudyScore(total)}.${completionNote}`;
@@ -562,6 +703,45 @@ export function createStudyUi(context) {
         renderStudySetup();
     }
 
+    function onStudySessionTypeToggle(event) {
+        const button = event.target.closest("[data-study-session-type]");
+
+        if (!button) {
+            return;
+        }
+
+        const nextSessionType = button.dataset.studySessionType === STUDY_SESSION_TYPES.srs
+            ? STUDY_SESSION_TYPES.srs
+            : STUDY_SESSION_TYPES.free;
+
+        if (nextSessionType === getStudySessionType()) {
+            return;
+        }
+
+        setStudySessionType(nextSessionType);
+        updateUiPrefs({
+            studySessionType: nextSessionType,
+            studyMode: elements.studyMode?.value || "de-en",
+            studyCardLimit: elements.studyCardLimit?.value.trim() || "",
+            srsNewCardsPerDay: elements.studySrsNewCardLimit?.value.trim() || getSrsNewCardsPerDay(),
+            selectedStudyCollectionIds: [...getSelectedStudyCollectionIds()],
+        });
+        renderStudySetup();
+    }
+
+    function onSrsNewCardsPerDayInput() {
+        const nextValue = elements.studySrsNewCardLimit?.value.trim() || "";
+        setSrsNewCardsPerDay(nextValue || String(DEFAULT_SRS_NEW_CARDS_PER_DAY));
+        updateUiPrefs({
+            studySessionType: getStudySessionType(),
+            studyMode: elements.studyMode?.value || "de-en",
+            studyCardLimit: elements.studyCardLimit?.value.trim() || "",
+            srsNewCardsPerDay: nextValue || String(DEFAULT_SRS_NEW_CARDS_PER_DAY),
+            selectedStudyCollectionIds: [...getSelectedStudyCollectionIds()],
+        });
+        renderStudySetup();
+    }
+
     function finalizeStudySession() {
         const studySession = getStudySession();
 
@@ -585,6 +765,7 @@ export function createStudyUi(context) {
                 ? [...studySession.collectionIds]
                 : [STUDY_ALL_COLLECTION_ID],
             mode: studySession.mode,
+            sessionType: studySession.sessionType || STUDY_SESSION_TYPES.free,
             score: studySession.score || 0,
             answeredCount,
             totalCards,
@@ -596,22 +777,16 @@ export function createStudyUi(context) {
         renderStudyInsights();
     }
 
-    function recordCardStudyResult(cardId, result) {
+    function recordCardStudyResult(cardId, result, options = {}) {
         if (!cardId) {
-            return;
+            return null;
         }
 
         if (!state.cardStats) {
             state.cardStats = {};
         }
 
-        const stats = state.cardStats[cardId] || {
-            timesSeen: 0,
-            timesCorrect: 0,
-            lastSeenAt: "",
-            lastCorrectAt: "",
-        };
-
+        const stats = getCardStatsForCard(cardId);
         const now = new Date().toISOString();
         stats.timesSeen += 1;
         stats.lastSeenAt = now;
@@ -621,7 +796,13 @@ export function createStudyUi(context) {
             stats.lastCorrectAt = now;
         }
 
+        if (options.applySrsReview) {
+            const rating = mapStudyResultToSrsRating(result);
+            Object.assign(stats, applySm2Review(stats, rating));
+        }
+
         state.cardStats[cardId] = stats;
+        return stats;
     }
 
     function getStudiedCardEntries() {
@@ -654,14 +835,17 @@ export function createStudyUi(context) {
     }
 
     function getCardStatsForCard(cardId) {
-        return (
-            state.cardStats?.[cardId] || {
-                timesSeen: 0,
-                timesCorrect: 0,
-                lastSeenAt: "",
-                lastCorrectAt: "",
-            }
-        );
+        const existing = state.cardStats?.[cardId];
+
+        return {
+            timesSeen: Number(existing?.timesSeen) || 0,
+            timesCorrect: Number(existing?.timesCorrect) || 0,
+            lastSeenAt: String(existing?.lastSeenAt || ""),
+            lastCorrectAt: String(existing?.lastCorrectAt || ""),
+            srsInterval: Number(existing?.srsInterval) || 0,
+            srsEaseFactor: Number(existing?.srsEaseFactor) || 2.5,
+            srsDueDate: String(existing?.srsDueDate || ""),
+        };
     }
 
     function createStudyCollectionOption({ id, label, count, checked, note = "" }) {
@@ -764,11 +948,18 @@ export function createStudyUi(context) {
             return;
         }
 
-        const cardLimit = parseStudyCardLimit(elements.studyCardLimit?.value);
-        const selectedCards = getStudyCardsForSelection();
-        const effectiveCardCount = Number.isNaN(cardLimit)
-            ? selectedCards.length
-            : getEffectiveStudyCardCount(selectedCards, cardLimit);
+        let effectiveCardCount = 0;
+
+        if (getStudySessionType() === STUDY_SESSION_TYPES.srs) {
+            effectiveCardCount = getSrsStudyCardsForSession().length;
+        } else {
+            const cardLimit = parseStudyCardLimit(elements.studyCardLimit?.value);
+            const selectedCards = getStudyCardsForSelection();
+            effectiveCardCount = Number.isNaN(cardLimit)
+                ? selectedCards.length
+                : getEffectiveStudyCardCount(selectedCards, cardLimit);
+        }
+
         const isMultipleChoiceAvailable = effectiveCardCount >= 5;
 
         multipleChoiceOption.disabled = !isMultipleChoiceAvailable;
@@ -778,6 +969,8 @@ export function createStudyUi(context) {
             updateUiPrefs({
                 studyMode: "de-en",
                 studyCardLimit: elements.studyCardLimit.value.trim(),
+                studySessionType: getStudySessionType(),
+                srsNewCardsPerDay: getSrsNewCardsPerDay(),
             });
         }
     }
@@ -844,6 +1037,8 @@ export function createStudyUi(context) {
         cancelSpeechPlayback,
         renderStudyPronunciationControls,
         onStudyCollectionOptionsChange,
+        onStudySessionTypeToggle,
+        onSrsNewCardsPerDayInput,
         finalizeStudySession,
         recordCardStudyResult,
         getStudiedCardEntries,
@@ -853,6 +1048,8 @@ export function createStudyUi(context) {
         getStudyCollectionSummaryText,
         getStudyCardsForSelection,
         getStudyCollectionsForSelection,
+        getSrsStudyCardsForSession,
+        getSrsDueSummaryForToday,
         renderStudyModeAvailability,
         getStudySelectionEmptyMessage,
         onStudyGermanCharacterClick,

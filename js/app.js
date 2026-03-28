@@ -20,6 +20,7 @@ import {
 } from "./study-mode.js";
 import {
     DEFAULT_COLLECTION_COLORS,
+    DEFAULT_SRS_NEW_CARDS_PER_DAY,
     HARD_IMAGE_UPLOAD_BYTES,
     IMAGE_UPLOAD_QUALITY_STEPS,
     MAX_IMAGE_UPLOAD_DIMENSION,
@@ -28,6 +29,7 @@ import {
     PAGINATION_PAGE_SIZES,
     SEARCH_INPUT_DEBOUNCE_MS,
     STUDY_ALL_COLLECTION_ID,
+    STUDY_SESSION_TYPES,
     TARGET_IMAGE_UPLOAD_BYTES,
 } from "./constants.js";
 import {
@@ -36,6 +38,8 @@ import {
     downloadTextFile,
     escapeHtml,
     formatFileSize,
+    formatSrsDueDateLabel,
+    formatSrsIntervalLabel,
     getEffectiveStudyCardCount,
     getStudyImageModeMessage,
     mergeEnglishAnswers,
@@ -60,6 +64,8 @@ let selectedStudyCollectionIds = new Set(
         ? uiPrefs.selectedStudyCollectionIds
         : [STUDY_ALL_COLLECTION_ID],
 );
+let studySessionType = uiPrefs.studySessionType || STUDY_SESSION_TYPES.free;
+let srsNewCardsPerDay = uiPrefs.srsNewCardsPerDay || String(DEFAULT_SRS_NEW_CARDS_PER_DAY);
 const selectedFlashcardIds = new Set();
 let persistQueue = Promise.resolve(false);
 let flashcardRenderDebounceId = 0;
@@ -117,11 +123,22 @@ const elements = {
     collectionCardsEditor: document.getElementById("collection-cards-editor"),
     collectionEditorPagination: document.getElementById("collection-editor-pagination"),
 
+    studyTabButton: document.querySelector('.tab-button[data-tab="study"]'),
+    studyTabDueBadge: document.getElementById("study-tab-due-badge"),
     studySetupForm: document.getElementById("study-setup-form"),
+    studySessionTypeToggle: document.getElementById("study-session-type-toggle"),
+    studySessionTypeButtons: Array.from(document.querySelectorAll("[data-study-session-type]")),
+    studySessionTypeDueCount: document.getElementById("study-session-type-due-count"),
+    studyDueBadge: document.getElementById("study-due-badge"),
+    studyFreeFields: document.getElementById("study-free-fields"),
+    studySrsFields: document.getElementById("study-srs-fields"),
+    studySrsEmptyState: document.getElementById("study-srs-empty-state"),
     studyCollectionSummary: document.getElementById("study-collection-summary"),
     studyCollectionOptions: document.getElementById("study-collection-options"),
     studyMode: document.getElementById("study-mode"),
     studyCardLimit: document.getElementById("study-card-limit"),
+    studySrsNewCardLimit: document.getElementById("study-srs-new-card-limit"),
+    studyStartButton: document.getElementById("study-start-button"),
     studySetupMessage: document.getElementById("study-setup-message"),
     studySessionBox: document.getElementById("study-session"),
     studyResultsBox: document.getElementById("study-results"),
@@ -230,6 +247,14 @@ const studyUi = createStudyUi({
     setStudySession: (value) => {
         studySession = value;
     },
+    getStudySessionType: () => studySessionType,
+    setStudySessionType: (value) => {
+        studySessionType = value;
+    },
+    getSrsNewCardsPerDay: () => srsNewCardsPerDay,
+    setSrsNewCardsPerDay: (value) => {
+        srsNewCardsPerDay = value;
+    },
     getSelectedStudyCollectionIds: () => selectedStudyCollectionIds,
     setSelectedStudyCollectionIds: (value) => {
         selectedStudyCollectionIds = value;
@@ -258,6 +283,8 @@ const {
     cancelSpeechPlayback,
     renderStudyPronunciationControls,
     onStudyCollectionOptionsChange,
+    onStudySessionTypeToggle,
+    onSrsNewCardsPerDayInput,
     finalizeStudySession,
     recordCardStudyResult,
     getStudiedCardEntries,
@@ -267,6 +294,8 @@ const {
     getStudyCollectionSummaryText,
     getStudyCardsForSelection,
     getStudyCollectionsForSelection,
+    getSrsStudyCardsForSession,
+    getSrsDueSummaryForToday,
     renderStudyModeAvailability,
     getStudySelectionEmptyMessage,
     onStudyGermanCharacterClick,
@@ -350,9 +379,11 @@ function bindEvents() {
     elements.collectionFlashcardForm.addEventListener("submit", onCollectionFlashcardSubmit);
 
     elements.studySetupForm.addEventListener("submit", onStudySetupSubmit);
+    elements.studySessionTypeToggle.addEventListener("click", onStudySessionTypeToggle);
     elements.studyCollectionOptions.addEventListener("change", onStudyCollectionOptionsChange);
     elements.studyMode.addEventListener("change", onStudyPreferencesChange);
     elements.studyCardLimit.addEventListener("input", onStudyPreferencesChange);
+    elements.studySrsNewCardLimit.addEventListener("input", onSrsNewCardsPerDayInput);
     elements.studyAnswerForm.addEventListener("submit", onStudyAnswerSubmit);
     elements.studyChoiceOptions.addEventListener("click", onStudyChoiceOptionsClick);
     elements.studyGermanCharacters.addEventListener("click", onStudyGermanCharacterClick);
@@ -526,11 +557,15 @@ function renderPaginationSection(key) {
 }
 
 function onStudyPreferencesChange() {
+    srsNewCardsPerDay = elements.studySrsNewCardLimit.value.trim() || String(DEFAULT_SRS_NEW_CARDS_PER_DAY);
     updateUiPrefs({
         studyMode: elements.studyMode.value,
+        studySessionType,
         studyCardLimit: elements.studyCardLimit.value.trim(),
+        srsNewCardsPerDay,
+        selectedStudyCollectionIds: [...selectedStudyCollectionIds],
     });
-    renderStudyModeAvailability();
+    renderStudySetup();
 }
 
 async function onFlashcardSubmit(event) {
@@ -785,62 +820,120 @@ function onStudySetupSubmit(event) {
 
     const mode = elements.studyMode.value;
     const cardLimit = parseStudyCardLimit(elements.studyCardLimit.value);
+    srsNewCardsPerDay = elements.studySrsNewCardLimit.value.trim() || String(DEFAULT_SRS_NEW_CARDS_PER_DAY);
 
     updateUiPrefs({
         studyMode: mode,
+        studySessionType,
         studyCardLimit: elements.studyCardLimit.value.trim(),
+        srsNewCardsPerDay,
         selectedStudyCollectionIds: [...selectedStudyCollectionIds],
     });
 
-    if (Number.isNaN(cardLimit)) {
+    if (studySessionType === STUDY_SESSION_TYPES.srs) {
+        const dueSummary = getSrsDueSummaryForToday();
+        let cards = getSrsStudyCardsForSession();
+        const queuedCardCount = cards.length;
+        let skippedCardsWithoutImages = 0;
+
+        if (dueSummary.dueCount <= 0 || queuedCardCount === 0) {
+            showStudySetupMessage("All caught up — come back tomorrow.");
+            renderStudySetup();
+            return;
+        }
+
+        if (mode === "image-de") {
+            cards = cards.filter((card) => card.hasImage);
+            skippedCardsWithoutImages = queuedCardCount - cards.length;
+        }
+
+        if (cards.length === 0) {
+            showStudySetupMessage(
+                getStudyImageModeMessage({
+                    selectedCardCount: queuedCardCount,
+                    skippedCardsWithoutImages,
+                    remainingCardsCount: 0,
+                }) || "No due SRS cards match the current prompt mode.",
+            );
+            return;
+        }
+
+        if (mode === "mc-de-en" && cards.length < 5) {
+            showStudySetupMessage(
+                "Multiple choice needs at least 5 due cards in the SRS queue.",
+            );
+            return;
+        }
+
         showStudySetupMessage(
-            "Enter a whole number greater than 0 for the card limit, or leave it blank.",
+            buildSrsSessionStartMessage({
+                dueSummary,
+                selectedCardCount: queuedCardCount,
+                skippedCardsWithoutImages,
+                remainingCardsCount: cards.length,
+            }),
         );
-        return;
-    }
 
-    let cards = getStudyCardsForSelection();
-    const selectedCardCount = cards.length;
-    let skippedCardsWithoutImages = 0;
+        studySession = createStudySession(cards, mode, {
+            preserveCardOrder: true,
+            sessionType: STUDY_SESSION_TYPES.srs,
+            collections: state.collections,
+        });
+        studySession.collectionIds = [STUDY_ALL_COLLECTION_ID];
+        studySession.collectionLabel = `Due for review (${dueSummary.dueCount})`;
+    } else {
+        if (Number.isNaN(cardLimit)) {
+            showStudySetupMessage(
+                "Enter a whole number greater than 0 for the card limit, or leave it blank.",
+            );
+            return;
+        }
 
-    if (mode === "image-de") {
-        cards = cards.filter((card) => card.hasImage);
-        skippedCardsWithoutImages = selectedCardCount - cards.length;
-    }
+        let cards = getStudyCardsForSelection();
+        const selectedCardCount = cards.length;
+        let skippedCardsWithoutImages = 0;
 
-    const studyableCardCount = getEffectiveStudyCardCount(cards, cardLimit);
+        if (mode === "image-de") {
+            cards = cards.filter((card) => card.hasImage);
+            skippedCardsWithoutImages = selectedCardCount - cards.length;
+        }
 
-    if (cards.length === 0) {
+        const studyableCardCount = getEffectiveStudyCardCount(cards, cardLimit);
+
+        if (cards.length === 0) {
+            showStudySetupMessage(
+                getStudyImageModeMessage({
+                    selectedCardCount,
+                    skippedCardsWithoutImages,
+                    remainingCardsCount: cards.length,
+                }) || getStudySelectionEmptyMessage(mode === "image-de"),
+            );
+            return;
+        }
+
+        if (mode === "mc-de-en" && studyableCardCount < 5) {
+            showStudySetupMessage(
+                "Multiple choice needs at least 5 study cards after your current collection, image, and max-card filters.",
+            );
+            return;
+        }
+
         showStudySetupMessage(
             getStudyImageModeMessage({
                 selectedCardCount,
                 skippedCardsWithoutImages,
-                remainingCardsCount: cards.length,
-            }) || getStudySelectionEmptyMessage(mode === "image-de"),
+                remainingCardsCount: studyableCardCount,
+            }),
         );
-        return;
+        studySession = createStudySession(cards, mode, {
+            cardLimit,
+            sessionType: STUDY_SESSION_TYPES.free,
+            collections: getStudyCollectionsForSelection(),
+        });
+        studySession.collectionIds = [...selectedStudyCollectionIds];
+        studySession.collectionLabel = getStudyCollectionSummaryText();
     }
 
-    if (mode === "mc-de-en" && studyableCardCount < 5) {
-        showStudySetupMessage(
-            "Multiple choice needs at least 5 study cards after your current collection, image, and max-card filters.",
-        );
-        return;
-    }
-
-    showStudySetupMessage(
-        getStudyImageModeMessage({
-            selectedCardCount,
-            skippedCardsWithoutImages,
-            remainingCardsCount: studyableCardCount,
-        }),
-    );
-    studySession = createStudySession(cards, mode, {
-        cardLimit,
-        collections: getStudyCollectionsForSelection(),
-    });
-    studySession.collectionIds = [...selectedStudyCollectionIds];
-    studySession.collectionLabel = getStudyCollectionSummaryText();
     studySession.startedAt = new Date().toISOString();
     studySession.answeredCount = 0;
     studySession.historyRecorded = false;
@@ -892,14 +985,22 @@ async function handleStudyAnswerSubmission(answerValue) {
         return;
     }
 
+    let updatedStats = null;
+
     if (currentCard) {
-        recordCardStudyResult(currentCard.id, result);
+        updatedStats = recordCardStudyResult(currentCard.id, result, {
+            applySrsReview: studySession.sessionType === STUDY_SESSION_TYPES.srs,
+        });
     }
 
     studySession.answeredCount = (studySession.answeredCount || 0) + 1;
 
     elements.studyFeedback.textContent = result.message;
-    elements.studyFeedbackNote.textContent = result.note;
+    elements.studyFeedbackNote.textContent = buildStudyFeedbackNote({
+        result,
+        updatedStats,
+        isSrsReview: studySession.sessionType === STUDY_SESSION_TYPES.srs,
+    });
     elements.studyFeedback.className = `study-feedback ${result.feedbackClass}`;
     elements.studyAnswer.disabled = true;
     elements.studyCheckButton.disabled = true;
@@ -915,6 +1016,7 @@ async function handleStudyAnswerSubmission(answerValue) {
 
     await persist();
     renderStudyLiveInsights();
+    renderStudySetup();
 }
 
 function onStudyNext() {
@@ -966,6 +1068,7 @@ function resetStudyView() {
     elements.studyFeedbackAudioRow.classList.add("hidden");
     elements.studyFeedbackAudioButton.disabled = false;
     elements.studyFeedbackAudioButton.removeAttribute("data-german-word");
+    renderStudySetup();
 }
 
 async function onBulkImport() {
@@ -1303,6 +1406,7 @@ function mergeBackupCardStats(importedCardStats, cardIdMap) {
         }
 
         const existingStats = getCardStatsForCard(targetCardId);
+        const mergedSrsStats = mergeSrsScheduleStats(existingStats, importedStats);
         state.cardStats[targetCardId] = {
             timesSeen: existingStats.timesSeen + toSafeNonNegativeInteger(importedStats?.timesSeen),
             timesCorrect:
@@ -1312,6 +1416,9 @@ function mergeBackupCardStats(importedCardStats, cardIdMap) {
                 existingStats.lastCorrectAt,
                 importedStats?.lastCorrectAt,
             ),
+            srsInterval: mergedSrsStats.srsInterval,
+            srsEaseFactor: mergedSrsStats.srsEaseFactor,
+            srsDueDate: mergedSrsStats.srsDueDate,
         };
         mergedCardStatsCount += 1;
     });
@@ -1694,9 +1801,54 @@ function getLatestIsoDate(leftValue, rightValue) {
     return rightTimestamp > leftTimestamp ? rightValue || "" : leftValue || "";
 }
 
+function mergeSrsScheduleStats(existingStats, importedStats) {
+    const existing = {
+        srsInterval: toSafeNonNegativeInteger(existingStats?.srsInterval),
+        srsEaseFactor: toSafeNonNegativeNumber(existingStats?.srsEaseFactor, 2.5),
+        srsDueDate: sanitizeLocalIsoDate(existingStats?.srsDueDate),
+    };
+    const incoming = {
+        srsInterval: toSafeNonNegativeInteger(importedStats?.srsInterval),
+        srsEaseFactor: toSafeNonNegativeNumber(importedStats?.srsEaseFactor, 2.5),
+        srsDueDate: sanitizeLocalIsoDate(importedStats?.srsDueDate),
+    };
+
+    if (!incoming.srsDueDate && incoming.srsInterval <= 0) {
+        return existing;
+    }
+
+    if (!existing.srsDueDate && existing.srsInterval <= 0) {
+        return incoming;
+    }
+
+    if (incoming.srsDueDate && existing.srsDueDate && incoming.srsDueDate !== existing.srsDueDate) {
+        return incoming.srsDueDate > existing.srsDueDate ? incoming : existing;
+    }
+
+    if (incoming.srsInterval !== existing.srsInterval) {
+        return incoming.srsInterval > existing.srsInterval ? incoming : existing;
+    }
+
+    if (incoming.srsEaseFactor !== existing.srsEaseFactor) {
+        return incoming.srsEaseFactor > existing.srsEaseFactor ? incoming : existing;
+    }
+
+    return existing;
+}
+
 function toSafeNonNegativeInteger(value) {
     const parsed = Number.parseInt(String(value || "").trim(), 10);
     return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function toSafeNonNegativeNumber(value, fallback = 0) {
+    const parsed = Number(String(value || "").trim());
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function sanitizeLocalIsoDate(value) {
+    const normalized = String(value || "").trim();
+    return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : "";
 }
 
 async function deleteFlashcards(cardIds) {
@@ -1814,12 +1966,19 @@ function ensureCardInCollection(collectionId, cardId) {
 }
 
 function applyUiPrefsToControls() {
+    studySessionType = uiPrefs.studySessionType || STUDY_SESSION_TYPES.free;
+    srsNewCardsPerDay = uiPrefs.srsNewCardsPerDay || String(DEFAULT_SRS_NEW_CARDS_PER_DAY);
+
     if (elements.studyMode) {
         elements.studyMode.value = uiPrefs.studyMode || "de-en";
     }
 
     if (elements.studyCardLimit) {
         elements.studyCardLimit.value = uiPrefs.studyCardLimit || "";
+    }
+
+    if (elements.studySrsNewCardLimit) {
+        elements.studySrsNewCardLimit.value = srsNewCardsPerDay;
     }
 }
 
@@ -2051,6 +2210,55 @@ function persist() {
         });
 
     return persistQueue;
+}
+
+function buildSrsSessionStartMessage({
+    dueSummary,
+    selectedCardCount,
+    skippedCardsWithoutImages,
+    remainingCardsCount,
+}) {
+    const baseParts = [
+        `${selectedCardCount} due card${selectedCardCount === 1 ? "" : "s"} in today’s SRS queue.`,
+    ];
+
+    if (dueSummary.newCardsInQueue > 0) {
+        baseParts.push(
+            `${dueSummary.newCardsInQueue} new, ${dueSummary.dueReviewCards} review${dueSummary.dueReviewCards === 1 ? "" : "s"}.`,
+        );
+    } else {
+        baseParts.push(
+            `${dueSummary.dueReviewCards} review card${dueSummary.dueReviewCards === 1 ? "" : "s"} due.`,
+        );
+    }
+
+    const imageModeMessage = getStudyImageModeMessage({
+        selectedCardCount,
+        skippedCardsWithoutImages,
+        remainingCardsCount,
+    });
+
+    if (imageModeMessage) {
+        baseParts.push(imageModeMessage);
+    }
+
+    return baseParts.join(" ");
+}
+
+function buildStudyFeedbackNote({ result, updatedStats, isSrsReview }) {
+    const parts = [];
+
+    if (result?.note) {
+        parts.push(result.note);
+    }
+
+    if (isSrsReview && updatedStats) {
+        parts.push(
+            `Next SRS review: ${formatSrsDueDateLabel(updatedStats.srsDueDate)}. Interval ${formatSrsIntervalLabel(updatedStats.srsInterval)}.`
+        );
+    }
+
+    return parts.join(" ").trim();
 }
 
 function showStudySetupMessage(message) {

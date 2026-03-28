@@ -125,6 +125,27 @@ pre {
     text-align: left;
 }
 
+.tab-button-with-badge {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.tab-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.75rem;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    background: rgba(79, 70, 229, 0.18);
+    color: #4338ca;
+    font-size: 0.82rem;
+    font-weight: 700;
+    line-height: 1.1;
+}
+
 .tab-button.active {
     background: white;
     color: #111827;
@@ -546,6 +567,45 @@ pre {
 
 .multiselect-empty {
     padding: 0.25rem 0;
+}
+
+.segmented-toggle {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+}
+
+.segmented-toggle-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.65rem 0.95rem;
+    background: white;
+    color: var(--text);
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.segmented-toggle-button.active {
+    background: #111827;
+    color: white;
+    border-color: #111827;
+}
+
+.segmented-toggle-button.active .tab-badge {
+    background: rgba(255, 255, 255, 0.18);
+    color: white;
+}
+
+.study-setup-header-row {
+    margin-bottom: 1rem;
+}
+
+.study-srs-note {
+    margin: 0;
 }
 
 .study-prompt-row {

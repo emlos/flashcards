@@ -1,6 +1,11 @@
 export const STUDY_ALL_COLLECTION_ID = "__all__";
 export const GERMAN_SPEECH_LANGUAGE = "de-DE";
 
+export const STUDY_SESSION_TYPES = Object.freeze({
+    free: "free",
+    srs: "srs",
+});
+
 export const DEFAULT_COLLECTION_COLORS = [
     "#4f46e5",
     "#0891b2",
@@ -14,9 +19,13 @@ export const DEFAULT_COLLECTION_COLORS = [
     "#65a30d",
 ];
 
+export const DEFAULT_SRS_NEW_CARDS_PER_DAY = 20;
+export const MIN_SRS_EASE_FACTOR = 1.3;
+export const DEFAULT_SRS_EASE_FACTOR = 2.5;
+
 export const MAX_IMPORT_ISSUES_TO_DISPLAY = 3;
 export const SEARCH_INPUT_DEBOUNCE_MS = 120;
-export const MAX_IMAGE_UPLOAD_SOURCE_BYTES = 5 * 1024 * 1024;
+export const MAX_IMAGE_UPLOAD_SOURCE_BYTES = 15 * 1024 * 1024;
 export const TARGET_IMAGE_UPLOAD_BYTES = Math.round(1.2 * 1024 * 1024);
 export const HARD_IMAGE_UPLOAD_BYTES = 2 * 1024 * 1024;
 export const MAX_IMAGE_UPLOAD_DIMENSION = 1600;

@@ -1,3 +1,10 @@
+import {
+    DEFAULT_SRS_EASE_FACTOR,
+    DEFAULT_SRS_NEW_CARDS_PER_DAY,
+    MIN_SRS_EASE_FACTOR,
+    STUDY_SESSION_TYPES,
+} from "./constants.js";
+
 const LEGACY_STORAGE_KEY = "de_en_flashcards_app_v1";
 const UI_PREFS_KEY = "de_en_flashcards_ui_prefs_v1";
 const DEFAULT_COLLECTION_COLOR = "#64748b";
@@ -64,6 +71,14 @@ function sanitizeCardStats(rawStats) {
             .map(([cardId, stats]) => {
                 const timesSeen = toNonNegativeInteger(stats?.timesSeen);
                 const timesCorrect = Math.min(toNonNegativeInteger(stats?.timesCorrect), timesSeen);
+                const srsInterval = toNonNegativeInteger(stats?.srsInterval);
+                const srsEaseFactor = Math.max(
+                    MIN_SRS_EASE_FACTOR,
+                    Number.isFinite(Number(stats?.srsEaseFactor))
+                        ? Number(stats.srsEaseFactor)
+                        : DEFAULT_SRS_EASE_FACTOR,
+                );
+                const srsDueDate = sanitizeLocalIsoDate(stats?.srsDueDate);
 
                 return [
                     String(cardId),
@@ -72,10 +87,21 @@ function sanitizeCardStats(rawStats) {
                         timesCorrect,
                         lastSeenAt: sanitizeIsoDate(stats?.lastSeenAt),
                         lastCorrectAt: sanitizeIsoDate(stats?.lastCorrectAt),
+                        srsInterval,
+                        srsEaseFactor: roundToTwoDecimals(srsEaseFactor),
+                        srsDueDate,
                     },
                 ];
             })
-            .filter(([, stats]) => stats.timesSeen > 0 || stats.timesCorrect > 0),
+            .filter(([, stats]) => {
+                return (
+                    stats.timesSeen > 0
+                    || stats.timesCorrect > 0
+                    || stats.srsInterval > 0
+                    || Boolean(stats.srsDueDate)
+                    || stats.srsEaseFactor !== DEFAULT_SRS_EASE_FACTOR
+                );
+            }),
     );
 }
 
@@ -95,6 +121,7 @@ function sanitizeStudyHistoryEntry(entry) {
             ? entry.collectionIds.map((id) => String(id)).filter(Boolean)
             : [],
         mode: sanitizeStudyMode(entry?.mode),
+        sessionType: sanitizeStudySessionType(entry?.sessionType),
         score: toNonNegativeNumber(entry?.score),
         answeredCount,
         totalCards,
@@ -125,7 +152,12 @@ function sanitizeUiPrefs(rawPrefs) {
     return {
         activeTab: sanitizeTabName(rawPrefs?.activeTab),
         studyMode: sanitizeStudyMode(rawPrefs?.studyMode),
+        studySessionType: sanitizeStudySessionType(rawPrefs?.studySessionType),
         studyCardLimit: sanitizeUiTextValue(rawPrefs?.studyCardLimit),
+        srsNewCardsPerDay: sanitizeUiNumericTextValue(
+            rawPrefs?.srsNewCardsPerDay,
+            DEFAULT_SRS_NEW_CARDS_PER_DAY,
+        ),
         selectedStudyCollectionIds: Array.isArray(rawPrefs?.selectedStudyCollectionIds)
             ? [
                   ...new Set(
@@ -135,6 +167,26 @@ function sanitizeUiPrefs(rawPrefs) {
             : [],
         selectedCollectionId: sanitizeUiTextValue(rawPrefs?.selectedCollectionId),
     };
+}
+
+function sanitizeUiNumericTextValue(value, fallback) {
+    const normalized = String(value ?? "").trim();
+
+    if (!normalized) {
+        return String(fallback);
+    }
+
+    const parsed = Number.parseInt(normalized, 10);
+    return Number.isInteger(parsed) && parsed > 0 ? String(parsed) : String(fallback);
+}
+
+function sanitizeLocalIsoDate(value) {
+    const normalized = String(value || "").trim();
+    return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : "";
+}
+
+function roundToTwoDecimals(value) {
+    return Math.round(Number(value || 0) * 100) / 100;
 }
 
 export async function loadState() {
@@ -606,6 +658,10 @@ function sanitizeStudyMode(value) {
     return ["de-en", "en-de", "image-de", "mc-de-en", "random"].includes(value)
         ? value
         : "de-en";
+}
+
+function sanitizeStudySessionType(value) {
+    return value === STUDY_SESSION_TYPES.srs ? STUDY_SESSION_TYPES.srs : STUDY_SESSION_TYPES.free;
 }
 
 function sanitizeTabName(value) {

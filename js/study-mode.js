@@ -1,14 +1,21 @@
+import {
+    DEFAULT_SRS_EASE_FACTOR,
+    DEFAULT_SRS_NEW_CARDS_PER_DAY,
+    MIN_SRS_EASE_FACTOR,
+} from "./constants.js";
+
 const MULTIPLE_CHOICE_OPTION_COUNT = 5;
 
 export function createStudySession(cards, mode, options = {}) {
-    const shuffledCards = shuffle([...cards]);
-    const cardLimit = toPositiveIntegerOrNull(options.cardLimit);
-    const sessionCards = cardLimit && cardLimit < shuffledCards.length
-        ? shuffledCards.slice(0, cardLimit)
-        : shuffledCards;
+    const orderedCards = options.preserveCardOrder ? [...cards] : shuffle([...cards]);
+    const cardLimit = options.preserveCardOrder ? null : toPositiveIntegerOrNull(options.cardLimit);
+    const sessionCards = cardLimit && cardLimit < orderedCards.length
+        ? orderedCards.slice(0, cardLimit)
+        : orderedCards;
 
     return {
         mode,
+        sessionType: options.sessionType || "free",
         cards: sessionCards,
         currentIndex: 0,
         score: 0,
@@ -134,6 +141,146 @@ export function isSessionFinished(session) {
 
 export function isGermanAnswerMode(mode) {
     return mode === "en-de" || mode === "image-de";
+}
+
+export function mapStudyResultToSrsRating(result) {
+    if (result?.outcome === "correct") {
+        return 4;
+    }
+
+    if (result?.outcome === "partial") {
+        return 2;
+    }
+
+    return 1;
+}
+
+export function applySm2Review(stats, rating, options = {}) {
+    const todayIso = sanitizeLocalIsoDate(options.todayIso) || getTodayLocalIsoDate();
+    const currentInterval = toNonNegativeInteger(stats?.srsInterval);
+    const currentEaseFactor = Math.max(
+        MIN_SRS_EASE_FACTOR,
+        Number.isFinite(Number(stats?.srsEaseFactor))
+            ? Number(stats.srsEaseFactor)
+            : DEFAULT_SRS_EASE_FACTOR,
+    );
+
+    let nextInterval = 1;
+    let nextEaseFactor = currentEaseFactor;
+
+    if (rating < 3) {
+        nextInterval = 1;
+        nextEaseFactor = Math.max(MIN_SRS_EASE_FACTOR, currentEaseFactor - 0.2);
+    } else {
+        if (currentInterval <= 0) {
+            nextInterval = 1;
+        } else if (currentInterval === 1) {
+            nextInterval = 6;
+        } else {
+            nextInterval = Math.max(1, Math.round(currentInterval * currentEaseFactor));
+        }
+
+        const qualityGap = 5 - rating;
+        nextEaseFactor = Math.max(
+            MIN_SRS_EASE_FACTOR,
+            currentEaseFactor + (0.1 - qualityGap * (0.08 + qualityGap * 0.02)),
+        );
+    }
+
+    return {
+        srsInterval: nextInterval,
+        srsEaseFactor: roundToTwoDecimals(nextEaseFactor),
+        srsDueDate: addDaysToLocalIsoDate(todayIso, nextInterval),
+    };
+}
+
+export function buildSrsStudyQueue(cards, cardStats, options = {}) {
+    const todayIso = sanitizeLocalIsoDate(options.todayIso) || getTodayLocalIsoDate();
+    const maxNewCards = toPositiveIntegerOrDefault(
+        options.maxNewCards,
+        DEFAULT_SRS_NEW_CARDS_PER_DAY,
+    );
+    const newCards = [];
+    const dueCardsByDate = new Map();
+
+    for (const card of cards || []) {
+        const stats = cardStats?.[card.id] || null;
+        const isNewCard = isNewSrsCard(stats);
+
+        if (isNewCard) {
+            newCards.push(card);
+            continue;
+        }
+
+        const dueDate = sanitizeLocalIsoDate(stats?.srsDueDate);
+
+        if (!dueDate || dueDate > todayIso) {
+            continue;
+        }
+
+        if (!dueCardsByDate.has(dueDate)) {
+            dueCardsByDate.set(dueDate, []);
+        }
+
+        dueCardsByDate.get(dueDate).push(card);
+    }
+
+    const orderedNewCards = shuffle([...newCards]).slice(0, maxNewCards);
+    const orderedDueCards = [];
+
+    [...dueCardsByDate.keys()]
+        .sort()
+        .forEach((dueDate) => {
+            orderedDueCards.push(...shuffle([...(dueCardsByDate.get(dueDate) || [])]));
+        });
+
+    return [...orderedNewCards, ...orderedDueCards];
+}
+
+export function getSrsDueSummary(cards, cardStats, options = {}) {
+    const todayIso = sanitizeLocalIsoDate(options.todayIso) || getTodayLocalIsoDate();
+    const maxNewCards = toPositiveIntegerOrDefault(
+        options.maxNewCards,
+        DEFAULT_SRS_NEW_CARDS_PER_DAY,
+    );
+    let totalNewCards = 0;
+    let dueReviewCards = 0;
+    let overdueCards = 0;
+    let dueTodayCards = 0;
+
+    for (const card of cards || []) {
+        const stats = cardStats?.[card.id] || null;
+
+        if (isNewSrsCard(stats)) {
+            totalNewCards += 1;
+            continue;
+        }
+
+        const dueDate = sanitizeLocalIsoDate(stats?.srsDueDate);
+
+        if (!dueDate || dueDate > todayIso) {
+            continue;
+        }
+
+        dueReviewCards += 1;
+
+        if (dueDate < todayIso) {
+            overdueCards += 1;
+        } else {
+            dueTodayCards += 1;
+        }
+    }
+
+    const newCardsInQueue = Math.min(totalNewCards, maxNewCards);
+
+    return {
+        dueCount: dueReviewCards + newCardsInQueue,
+        totalNewCards,
+        newCardsInQueue,
+        dueReviewCards,
+        overdueCards,
+        dueTodayCards,
+    };
 }
 
 function resolvePromptMode(card, mode, multipleChoiceData) {
@@ -676,6 +823,59 @@ function isSingleEditAway(source, target) {
     }
 
     return true;
+}
+
+function isNewSrsCard(stats) {
+    return toNonNegativeInteger(stats?.srsInterval) <= 0 || !sanitizeLocalIsoDate(stats?.srsDueDate);
+}
+
+function getTodayLocalIsoDate() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+}
+
+function addDaysToLocalIsoDate(startIso, days) {
+    const baseDate = parseLocalIsoDate(startIso) || new Date();
+    const nextDate = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate());
+    nextDate.setDate(nextDate.getDate() + Math.max(0, Number.parseInt(String(days || 0), 10) || 0));
+
+    const year = nextDate.getFullYear();
+    const month = String(nextDate.getMonth() + 1).padStart(2, "0");
+    const day = String(nextDate.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+}
+
+function parseLocalIsoDate(value) {
+    const normalized = sanitizeLocalIsoDate(value);
+
+    if (!normalized) {
+        return null;
+    }
+
+    const [year, month, day] = normalized.split("-").map((part) => Number.parseInt(part, 10));
+    return new Date(year, month - 1, day);
+}
+
+function sanitizeLocalIsoDate(value) {
+    const normalized = String(value || "").trim();
+    return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : "";
+}
+
+function roundToTwoDecimals(value) {
+    return Math.round(Number(value || 0) * 100) / 100;
+}
+
+function toNonNegativeInteger(value) {
+    const numericValue = Number.parseInt(String(value || "").trim(), 10);
+    return Number.isInteger(numericValue) && numericValue >= 0 ? numericValue : 0;
+}
+
+function toPositiveIntegerOrDefault(value, fallback) {
+    const numericValue = Number.parseInt(String(value || "").trim(), 10);
+    return Number.isInteger(numericValue) && numericValue > 0 ? numericValue : fallback;
 }
 
 function toPositiveIntegerOrNull(value) {
