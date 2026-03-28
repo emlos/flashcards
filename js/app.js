@@ -869,7 +869,6 @@ function renderFlashcards() {
         main.className = "item-row-main";
         main.innerHTML = `
       <div class="item-title">${escapeHtml(card.german)} — ${escapeHtml(card.englishAnswers.join(", "))}</div>
-      <div class="item-subtitle">ID: ${escapeHtml(card.id)}</div>
       <div class="item-tags">${card.hasImage ? "Has image card" : "No image"}</div>
     `;
         main.appendChild(createCollectionPillsContainer(card.id));
