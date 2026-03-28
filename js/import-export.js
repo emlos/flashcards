@@ -59,33 +59,38 @@ function parseNonNegativeNumber(value) {
 }
 
 export function parseBulkWords(text) {
-    const lines = text
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean);
-
     const entries = [];
+    const issues = [];
 
-    for (const line of lines) {
-        if (line.startsWith("#")) {
-            continue;
+    text.split(/\r?\n/).forEach((rawLine, index) => {
+        const line = rawLine.trim();
+
+        if (!line || line.startsWith("#")) {
+            return;
         }
 
         const parts = line.split("|").map((part) => part.trim());
 
         if (parts.length !== 2 && parts.length !== 3) {
-            throw new Error(
-                `Invalid line: "${line}". Expected format: German | English or German | English1; English2 | Collection A, Collection B`,
-            );
+            issues.push({
+                lineNumber: index + 1,
+                line,
+                message:
+                    "Expected format: German | English or German | English1; English2 | Collection A, Collection B.",
+            });
+            return;
         }
 
         const [german, englishPart, collectionsPart = ""] = parts;
         const englishAnswers = parseEnglishAnswersField(englishPart);
 
         if (!german || englishAnswers.length === 0) {
-            throw new Error(
-                `Invalid line: "${line}". German and at least one English meaning are required.`,
-            );
+            issues.push({
+                lineNumber: index + 1,
+                line,
+                message: "German and at least one English meaning are required.",
+            });
+            return;
         }
 
         const collectionNames = collectionsPart
@@ -102,9 +107,9 @@ export function parseBulkWords(text) {
             },
             collectionNames: [...new Set(collectionNames)],
         });
-    }
+    });
 
-    return entries;
+    return { entries, issues };
 }
 
 export function exportBackupText(state) {
@@ -167,23 +172,34 @@ export function exportBackupText(state) {
 }
 
 export function parseBackupText(text) {
-    const lines = text
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean);
-
+    const lines = text.split(/\r?\n/);
     const flashcards = [];
     const collections = [];
     const studyHistory = [];
     const cardStats = {};
+    const issues = [];
 
-    for (const line of lines) {
-        const parts = line.split("\t");
+    lines.forEach((rawLine, index) => {
+        const line = rawLine.trim();
+
+        if (!line || line.startsWith("#")) {
+            return;
+        }
+
+        const parts = line.split("	");
         const type = parts[0];
+        const issueBase = {
+            lineNumber: index + 1,
+            line,
+        };
 
         if (type === "CARD") {
             if (parts.length < 5) {
-                throw new Error(`Invalid CARD line: "${line}"`);
+                issues.push({
+                    ...issueBase,
+                    message: "Skipped malformed CARD line.",
+                });
+                return;
             }
 
             flashcards.push({
@@ -192,9 +208,16 @@ export function parseBackupText(text) {
                 englishAnswers: parseBackupEnglishAnswers(decodeField(parts[3])),
                 imageData: decodeField(parts[4]),
             });
-        } else if (type === "COLLECTION") {
+            return;
+        }
+
+        if (type === "COLLECTION") {
             if (parts.length < 4) {
-                throw new Error(`Invalid COLLECTION line: "${line}"`);
+                issues.push({
+                    ...issueBase,
+                    message: "Skipped malformed COLLECTION line.",
+                });
+                return;
             }
 
             collections.push({
@@ -203,9 +226,16 @@ export function parseBackupText(text) {
                 cardIds: parts[3] ? parseCollectionIdsField(parts[3]) : [],
                 color: parts[4] ? decodeField(parts[4]) : "#64748b",
             });
-        } else if (type === "CARDSTAT") {
+            return;
+        }
+
+        if (type === "CARDSTAT") {
             if (parts.length < 4) {
-                throw new Error(`Invalid CARDSTAT line: "${line}"`);
+                issues.push({
+                    ...issueBase,
+                    message: "Skipped malformed CARDSTAT line.",
+                });
+                return;
             }
 
             cardStats[parts[1]] = {
@@ -214,9 +244,16 @@ export function parseBackupText(text) {
                 lastSeenAt: parts[4] ? decodeField(parts[4]) : "",
                 lastCorrectAt: parts[5] ? decodeField(parts[5]) : "",
             };
-        } else if (type === "SESSION") {
+            return;
+        }
+
+        if (type === "SESSION") {
             if (parts.length < 9) {
-                throw new Error(`Invalid SESSION line: "${line}"`);
+                issues.push({
+                    ...issueBase,
+                    message: "Skipped malformed SESSION line.",
+                });
+                return;
             }
 
             studyHistory.push({
@@ -229,10 +266,14 @@ export function parseBackupText(text) {
                 answeredCount: parsePositiveInteger(parts[7]),
                 totalCards: parsePositiveInteger(parts[8]),
             });
-        } else {
-            throw new Error(`Unknown line type: "${line}"`);
+            return;
         }
-    }
+
+        issues.push({
+            ...issueBase,
+            message: `Skipped unrecognized line type "${type}".`,
+        });
+    });
 
     const cardIds = new Set(flashcards.map((card) => card.id));
     for (const collection of collections) {
@@ -245,5 +286,8 @@ export function parseBackupText(text) {
         }
     }
 
-    return { flashcards, collections, studyHistory, cardStats };
+    return {
+        state: { flashcards, collections, studyHistory, cardStats },
+        issues,
+    };
 }

@@ -45,6 +45,7 @@ let selectedStudyCollectionIds = new Set(
         : [STUDY_ALL_COLLECTION_ID],
 );
 const selectedFlashcardIds = new Set();
+const MAX_IMPORT_ISSUES_TO_DISPLAY = 3;
 let persistQueue = Promise.resolve(false);
 
 const elements = {
@@ -492,85 +493,38 @@ async function onBulkImport() {
 
     try {
         const text = await file.text();
-        const importedEntries = parseBulkWords(text);
+        const { entries, issues } = parseBulkWords(text);
 
-        let createdCardsCount = 0;
-        let reusedCardsCount = 0;
-        let createdCollectionsCount = 0;
-
-        const duplicateLogs = [];
-
-        for (const entry of importedEntries) {
-            let card = findExistingFlashcardByGerman(entry.card.german);
-            const isDuplicate = Boolean(card);
-            let addedMeanings = [];
-
-            if (!card) {
-                card = entry.card;
-                state.flashcards.push(card);
-                createdCardsCount += 1;
-            } else {
-                reusedCardsCount += 1;
-
-                const mergeResult = mergeEnglishAnswers(
-                    card.englishAnswers,
-                    entry.card.englishAnswers,
-                );
-
-                card.englishAnswers = mergeResult.merged;
-                addedMeanings = mergeResult.added;
+        if (entries.length === 0) {
+            if (issues.length > 0) {
+                logImportIssues("Bulk import", issues);
             }
 
-            const addedToCollections = [];
-
-            for (const collectionName of entry.collectionNames) {
-                const { collection, created } = getOrCreateCollectionByName(collectionName);
-
-                if (!collection) {
-                    continue;
-                }
-
-                if (created) {
-                    createdCollectionsCount += 1;
-                }
-
-                if (!collection.cardIds.includes(card.id)) {
-                    collection.cardIds.push(card.id);
-                    addedToCollections.push(collection.name);
-                }
-            }
-
-            if (isDuplicate) {
-                duplicateLogs.push({
-                    german: entry.card.german,
-                    reusedId: card.id,
-                    addedMeanings,
-                    addedToCollections,
-                });
-            }
-        }
-
-        if (duplicateLogs.length > 0) {
-            console.groupCollapsed(
-                `[Bulk import] Reused ${duplicateLogs.length} duplicate word(s)`,
+            showImportExportMessage(
+                issues.length > 0
+                    ? `No flashcards were imported. ${formatImportIssuesSummary(issues)}`
+                    : "No valid flashcards were found in that file.",
+                false,
             );
-
-            duplicateLogs.forEach((item) => {
-                console.info(
-                    `Duplicate word reused: "${item.german}" (card id: ${item.reusedId}). ` +
-                        `Added meanings: ${item.addedMeanings.length > 0 ? item.addedMeanings.join(", ") : "none"}. ` +
-                        `Added to collections: ${item.addedToCollections.length > 0 ? item.addedToCollections.join(", ") : "none"}.`,
-                );
-            });
-
-            console.groupEnd();
+            return;
         }
+
+        const importResult = applyImportedFlashcardEntries(entries, { logLabel: "Bulk import" });
 
         await persist();
-        renderAll();
+        finalizeImportState();
+
+        if (issues.length > 0) {
+            logImportIssues("Bulk import", issues);
+        }
 
         showImportExportMessage(
-            `Imported complete. Created ${createdCardsCount} new flashcard(s), reused ${reusedCardsCount} duplicate(s), created ${createdCollectionsCount} new collection(s).`,
+            [
+                `Imported ${entries.length} valid line(s). Created ${importResult.createdCardsCount} new flashcard(s), reused ${importResult.reusedCardsCount} duplicate(s), created ${importResult.createdCollectionsCount} new collection(s).`,
+                issues.length > 0 ? formatImportIssuesSummary(issues) : "",
+            ]
+                .filter(Boolean)
+                .join(" "),
             true,
         );
 
@@ -590,18 +544,53 @@ async function onBackupImport() {
 
     try {
         const text = await file.text();
-        state = await replaceState(parseBackupText(text));
-        selectedCollectionId = getValidSelectedCollectionId(state.collections[0]?.id || null);
-        selectedStudyCollectionIds = new Set([STUDY_ALL_COLLECTION_ID]);
-        updateUiPrefs({
-            selectedCollectionId: selectedCollectionId || "",
-            selectedStudyCollectionIds: [STUDY_ALL_COLLECTION_ID],
-        });
-        selectedFlashcardIds.clear();
-        resetStudyView();
-        setCollectionColorInputDefault();
-        renderAll();
-        showImportExportMessage("Full backup imported successfully.", true);
+        const { state: importedState, issues } = parseBackupText(text);
+        const importMode = chooseBackupImportMode(importedState, issues);
+
+        if (!importMode) {
+            showImportExportMessage("Backup import cancelled.", false);
+            return;
+        }
+
+        if (importMode === "replace") {
+            state = await replaceState(importedState);
+            finalizeImportState({ resetStudySelection: true, resetSelectedCollection: true });
+        } else {
+            const mergeResult = mergeBackupStateIntoCurrentState(importedState);
+            await persist();
+            finalizeImportState();
+
+            showImportExportMessage(
+                [
+                    `Backup merged successfully. Created ${mergeResult.createdCardsCount} new flashcard(s), reused ${mergeResult.reusedCardsCount} duplicate(s), created ${mergeResult.createdCollectionsCount} new collection(s), merged ${mergeResult.mergedSessionCount} session(s), and merged stats for ${mergeResult.mergedCardStatsCount} card(s).`,
+                    issues.length > 0 ? formatImportIssuesSummary(issues) : "",
+                ]
+                    .filter(Boolean)
+                    .join(" "),
+                true,
+            );
+
+            if (issues.length > 0) {
+                logImportIssues("Backup import", issues);
+            }
+
+            elements.backupImportFile.value = "";
+            return;
+        }
+
+        if (issues.length > 0) {
+            logImportIssues("Backup import", issues);
+        }
+
+        showImportExportMessage(
+            [
+                "Backup replaced your current data successfully.",
+                issues.length > 0 ? formatImportIssuesSummary(issues) : "",
+            ]
+                .filter(Boolean)
+                .join(" "),
+            true,
+        );
         elements.backupImportFile.value = "";
     } catch (error) {
         showImportExportMessage(error.message || "Backup import failed.", false);
@@ -1224,6 +1213,318 @@ function formatRelativeDateLabel(value) {
     }
 
     return `${diffDays} days ago`;
+}
+
+function createImportedCollectionRefs(collections) {
+    const refsByCardId = new Map();
+
+    (collections || []).forEach((collection) => {
+        (collection.cardIds || []).forEach((cardId) => {
+            const existingRefs = refsByCardId.get(cardId) || [];
+            existingRefs.push({
+                id: collection.id,
+                name: collection.name,
+                color: collection.color,
+            });
+            refsByCardId.set(cardId, existingRefs);
+        });
+    });
+
+    return refsByCardId;
+}
+
+function convertBackupStateToImportedEntries(backupState) {
+    const collectionRefsByCardId = createImportedCollectionRefs(backupState.collections || []);
+
+    return (backupState.flashcards || []).map((card) => ({
+        card: {
+            id: card.id,
+            german: card.german,
+            englishAnswers: [...(card.englishAnswers || [])],
+            imageData: card.imageData || "",
+        },
+        collections: collectionRefsByCardId.get(card.id) || [],
+    }));
+}
+
+function applyImportedFlashcardEntries(entries, { logLabel = "Import" } = {}) {
+    let createdCardsCount = 0;
+    let reusedCardsCount = 0;
+    let createdCollectionsCount = 0;
+    const duplicateLogs = [];
+    const cardIdMap = {};
+    const collectionIdMap = {};
+
+    for (const entry of entries) {
+        let card = findExistingFlashcardByGerman(entry.card.german);
+        const isDuplicate = Boolean(card);
+        let addedMeanings = [];
+        let adoptedImage = false;
+
+        if (!card) {
+            card = {
+                id: entry.card.id || crypto.randomUUID(),
+                german: entry.card.german,
+                englishAnswers: [...(entry.card.englishAnswers || [])],
+                imageData: entry.card.imageData || "",
+            };
+            state.flashcards.push(card);
+            createdCardsCount += 1;
+        } else {
+            reusedCardsCount += 1;
+
+            const mergeResult = mergeEnglishAnswers(card.englishAnswers, entry.card.englishAnswers);
+            card.englishAnswers = mergeResult.merged;
+            addedMeanings = mergeResult.added;
+
+            if (entry.card.imageData && !card.imageData) {
+                card.imageData = entry.card.imageData;
+                adoptedImage = true;
+            }
+        }
+
+        if (entry.card.id) {
+            cardIdMap[entry.card.id] = card.id;
+        }
+
+        const importedCollections = Array.isArray(entry.collections)
+            ? entry.collections
+            : (entry.collectionNames || []).map((name) => ({ name }));
+        const addedToCollections = [];
+
+        for (const collectionRef of importedCollections) {
+            const { collection, created } = getOrCreateCollectionByName(
+                collectionRef.name,
+                collectionRef.color || getSuggestedCollectionColor(),
+            );
+
+            if (!collection) {
+                continue;
+            }
+
+            if (collectionRef.id) {
+                collectionIdMap[collectionRef.id] = collection.id;
+            }
+
+            if (created) {
+                createdCollectionsCount += 1;
+            }
+
+            if (!collection.cardIds.includes(card.id)) {
+                collection.cardIds.push(card.id);
+                addedToCollections.push(collection.name);
+            }
+        }
+
+        if (isDuplicate) {
+            duplicateLogs.push({
+                german: entry.card.german,
+                reusedId: card.id,
+                addedMeanings,
+                addedToCollections,
+                adoptedImage,
+            });
+        }
+    }
+
+    if (duplicateLogs.length > 0) {
+        console.groupCollapsed(`[${logLabel}] Reused ${duplicateLogs.length} duplicate word(s)`);
+
+        duplicateLogs.forEach((item) => {
+            console.info(
+                `Duplicate word reused: "${item.german}" (card id: ${item.reusedId}). ` +
+                    `Added meanings: ${item.addedMeanings.length > 0 ? item.addedMeanings.join(", ") : "none"}. ` +
+                    `Added to collections: ${item.addedToCollections.length > 0 ? item.addedToCollections.join(", ") : "none"}. ` +
+                    `Adopted image: ${item.adoptedImage ? "yes" : "no"}.`,
+            );
+        });
+
+        console.groupEnd();
+    }
+
+    return {
+        createdCardsCount,
+        reusedCardsCount,
+        createdCollectionsCount,
+        cardIdMap,
+        collectionIdMap,
+    };
+}
+
+function mergeBackupCardStats(importedCardStats, cardIdMap) {
+    if (!state.cardStats) {
+        state.cardStats = {};
+    }
+
+    let mergedCardStatsCount = 0;
+
+    Object.entries(importedCardStats || {}).forEach(([sourceCardId, importedStats]) => {
+        const targetCardId = cardIdMap[sourceCardId];
+
+        if (!targetCardId) {
+            return;
+        }
+
+        const existingStats = getCardStats(targetCardId);
+        state.cardStats[targetCardId] = {
+            timesSeen: existingStats.timesSeen + toSafeNonNegativeInteger(importedStats?.timesSeen),
+            timesCorrect:
+                existingStats.timesCorrect + toSafeNonNegativeInteger(importedStats?.timesCorrect),
+            lastSeenAt: getLatestIsoDate(existingStats.lastSeenAt, importedStats?.lastSeenAt),
+            lastCorrectAt: getLatestIsoDate(
+                existingStats.lastCorrectAt,
+                importedStats?.lastCorrectAt,
+            ),
+        };
+        mergedCardStatsCount += 1;
+    });
+
+    return mergedCardStatsCount;
+}
+
+function mergeBackupStudyHistory(importedHistory, collectionIdMap) {
+    const existingIds = new Set((state.studyHistory || []).map((entry) => entry.id));
+    const nextHistoryEntries = [];
+
+    (importedHistory || []).forEach((entry) => {
+        const nextId = entry.id && !existingIds.has(entry.id) ? entry.id : crypto.randomUUID();
+        existingIds.add(nextId);
+        nextHistoryEntries.push({
+            ...entry,
+            id: nextId,
+            collectionIds: (entry.collectionIds || [])
+                .map((collectionId) => collectionIdMap[collectionId])
+                .filter(Boolean),
+        });
+    });
+
+    state.studyHistory = [...nextHistoryEntries, ...(state.studyHistory || [])]
+        .sort((left, right) => {
+            return Date.parse(right.finishedAt || 0) - Date.parse(left.finishedAt || 0);
+        })
+        .slice(0, 200);
+
+    return nextHistoryEntries.length;
+}
+
+function mergeBackupStateIntoCurrentState(importedState) {
+    const importedEntries = convertBackupStateToImportedEntries(importedState);
+    const flashcardImportResult = applyImportedFlashcardEntries(importedEntries, {
+        logLabel: "Backup import",
+    });
+    const mergedCardStatsCount = mergeBackupCardStats(
+        importedState.cardStats,
+        flashcardImportResult.cardIdMap,
+    );
+    const mergedSessionCount = mergeBackupStudyHistory(
+        importedState.studyHistory,
+        flashcardImportResult.collectionIdMap,
+    );
+
+    return {
+        ...flashcardImportResult,
+        mergedCardStatsCount,
+        mergedSessionCount,
+    };
+}
+
+function chooseBackupImportMode(importedState, issues) {
+    const totalCards = importedState.flashcards?.length || 0;
+    const totalCollections = importedState.collections?.length || 0;
+    const totalSessions = importedState.studyHistory?.length || 0;
+    const totalCardStats = Object.keys(importedState.cardStats || {}).length;
+    const issueSummary =
+        issues.length > 0
+            ? `
+
+Warnings: ${formatImportIssuesSummary(issues)}`
+            : "";
+
+    const response = window.prompt(
+        `Backup ready to import. It contains ${totalCards} flashcard(s), ${totalCollections} collection(s), ${totalSessions} saved session(s), and stats for ${totalCardStats} card(s).
+
+Type "merge" to merge it into your current data, type "replace" to overwrite all current data, or leave blank to cancel.${issueSummary}`,
+        "merge",
+    );
+    const normalizedResponse = normalizeWord(response);
+
+    if (normalizedResponse === "merge" || normalizedResponse === "replace") {
+        return normalizedResponse;
+    }
+
+    return null;
+}
+
+function finalizeImportState({
+    resetStudySelection = false,
+    resetSelectedCollection = false,
+} = {}) {
+    sanitizeStudyCollectionSelection();
+
+    if (resetSelectedCollection) {
+        selectedCollectionId = getValidSelectedCollectionId(state.collections[0]?.id || null);
+    } else {
+        selectedCollectionId = getValidSelectedCollectionId(selectedCollectionId);
+    }
+
+    if (resetStudySelection) {
+        selectedStudyCollectionIds = new Set([STUDY_ALL_COLLECTION_ID]);
+    }
+
+    updateUiPrefs({
+        selectedCollectionId: selectedCollectionId || "",
+        selectedStudyCollectionIds: [...selectedStudyCollectionIds],
+    });
+    selectedFlashcardIds.clear();
+    resetStudyView();
+    setCollectionColorInputDefault();
+    renderAll();
+}
+
+function formatImportIssuesSummary(issues) {
+    if (!issues.length) {
+        return "";
+    }
+
+    const preview = issues
+        .slice(0, MAX_IMPORT_ISSUES_TO_DISPLAY)
+        .map((issue) => `line ${issue.lineNumber}: ${issue.message}`)
+        .join("; ");
+    const remainingCount = issues.length - Math.min(issues.length, MAX_IMPORT_ISSUES_TO_DISPLAY);
+
+    return `Skipped ${issues.length} malformed or unsupported line(s) (${preview}${remainingCount > 0 ? `; +${remainingCount} more` : ""}).`;
+}
+
+function logImportIssues(label, issues) {
+    if (!issues.length) {
+        return;
+    }
+
+    console.groupCollapsed(`[${label}] Skipped ${issues.length} line(s)`);
+    issues.forEach((issue) => {
+        console.warn(`Line ${issue.lineNumber}: ${issue.message} Raw: ${issue.line}`);
+    });
+    console.groupEnd();
+}
+
+function getLatestIsoDate(leftValue, rightValue) {
+    const leftTimestamp = Date.parse(leftValue || "");
+    const rightTimestamp = Date.parse(rightValue || "");
+
+    if (!Number.isFinite(leftTimestamp)) {
+        return Number.isFinite(rightTimestamp) ? rightValue || "" : "";
+    }
+
+    if (!Number.isFinite(rightTimestamp)) {
+        return leftValue || "";
+    }
+
+    return rightTimestamp > leftTimestamp ? rightValue || "" : leftValue || "";
+}
+
+function toSafeNonNegativeInteger(value) {
+    const parsed = Number.parseInt(String(value || "").trim(), 10);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
 }
 
 function formatSessionCompletionLabel(entry) {
