@@ -57,6 +57,14 @@ const TARGET_IMAGE_UPLOAD_BYTES = Math.round(1.2 * 1024 * 1024);
 const HARD_IMAGE_UPLOAD_BYTES = 2 * 1024 * 1024;
 const MAX_IMAGE_UPLOAD_DIMENSION = 1600;
 const IMAGE_UPLOAD_QUALITY_STEPS = [0.92, 0.84, 0.76, 0.68, 0.6];
+const PAGINATION_PAGE_SIZES = Object.freeze({
+    flashcards: 50,
+    collections: 20,
+    collectionEditor: 50,
+    studyHistory: 10,
+    strugglingCards: 10,
+    cardStats: 25,
+});
 let persistQueue = Promise.resolve(false);
 let flashcardRenderDebounceId = 0;
 let collectionEditorRenderDebounceId = 0;
@@ -67,6 +75,14 @@ let lastFocusedElementBeforeFlashcardDeleteModal = null;
 let flashcardDeleteSkipConfirmUntilVisibilityChange = false;
 let pendingFlashcardDeleteContext = null;
 let hasBoundSpeechSynthesisEvents = false;
+const paginationState = {
+    flashcards: 1,
+    collections: 1,
+    collectionEditor: 1,
+    studyHistory: 1,
+    strugglingCards: 1,
+    cardStats: 1,
+};
 
 const elements = {
     appStatusMessage: document.getElementById("app-status-message"),
@@ -83,6 +99,7 @@ const elements = {
     flashcardDeleteSelected: document.getElementById("flashcard-delete-selected"),
     flashcardSelectionSummary: document.getElementById("flashcard-selection-summary"),
     flashcardsList: document.getElementById("flashcards-list"),
+    flashcardsPagination: document.getElementById("flashcards-pagination"),
     flashcardsEmpty: document.getElementById("flashcards-empty"),
     flashcardCount: document.getElementById("flashcard-count"),
 
@@ -90,6 +107,7 @@ const elements = {
     collectionName: document.getElementById("collection-name"),
     collectionColor: document.getElementById("collection-color"),
     collectionsList: document.getElementById("collections-list"),
+    collectionsPagination: document.getElementById("collections-pagination"),
     collectionsEmpty: document.getElementById("collections-empty"),
     collectionCount: document.getElementById("collection-count"),
     selectedCollectionName: document.getElementById("selected-collection-name"),
@@ -104,6 +122,7 @@ const elements = {
     collectionFlashcardImage: document.getElementById("collection-flashcard-image"),
     collectionEditorSummary: document.getElementById("collection-editor-summary"),
     collectionCardsEditor: document.getElementById("collection-cards-editor"),
+    collectionEditorPagination: document.getElementById("collection-editor-pagination"),
 
     studySetupForm: document.getElementById("study-setup-form"),
     studyCollectionSummary: document.getElementById("study-collection-summary"),
@@ -132,10 +151,13 @@ const elements = {
     studyResetButton: document.getElementById("study-reset-button"),
     studyHistorySummary: document.getElementById("study-history-summary"),
     studyHistoryList: document.getElementById("study-history-list"),
+    studyHistoryPagination: document.getElementById("study-history-pagination"),
     strugglingCardsSummary: document.getElementById("struggling-cards-summary"),
     strugglingCardsList: document.getElementById("struggling-cards-list"),
+    strugglingCardsPagination: document.getElementById("struggling-cards-pagination"),
     cardStatsSummary: document.getElementById("card-stats-summary"),
     cardStatsList: document.getElementById("card-stats-list"),
+    cardStatsPagination: document.getElementById("card-stats-pagination"),
 
     bulkImportFile: document.getElementById("bulk-import-file"),
     bulkImportButton: document.getElementById("bulk-import-button"),
@@ -313,6 +335,112 @@ function scheduleCollectionEditorRender() {
     });
 }
 
+function resetPaginationPage(key) {
+    paginationState[key] = 1;
+}
+
+function setPaginationPageForIndex(key, pageSize, index) {
+    paginationState[key] = index >= 0 ? Math.floor(index / pageSize) + 1 : 1;
+}
+
+function getPaginationSlice(items, key, pageSize) {
+    const totalItems = items.length;
+    const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+    const requestedPage = Number.isInteger(paginationState[key]) ? paginationState[key] : 1;
+    const currentPage = Math.min(Math.max(requestedPage, 1), totalPages);
+    const startIndex = totalItems === 0 ? 0 : (currentPage - 1) * pageSize;
+    const endIndex = Math.min(startIndex + pageSize, totalItems);
+
+    paginationState[key] = currentPage;
+
+    return {
+        items: items.slice(startIndex, endIndex),
+        currentPage,
+        totalPages,
+        totalItems,
+        startIndex,
+        endIndex,
+    };
+}
+
+function renderPaginationControls(container, { key, pageSize, totalItems, currentPage, totalPages }) {
+    container.innerHTML = "";
+
+    const shouldShowPagination = totalItems > pageSize;
+    container.classList.toggle("hidden", !shouldShowPagination);
+
+    if (!shouldShowPagination) {
+        return;
+    }
+
+    const summary = document.createElement("span");
+    summary.className = "pagination-summary muted";
+    summary.textContent = `${totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1}-${Math.min(currentPage * pageSize, totalItems)} of ${totalItems}`;
+
+    const controls = document.createElement("div");
+    controls.className = "pagination-button-group";
+
+    const previousButton = document.createElement("button");
+    previousButton.type = "button";
+    previousButton.className = "secondary pagination-button";
+    previousButton.textContent = "Previous";
+    previousButton.disabled = currentPage <= 1;
+    previousButton.addEventListener("click", () => {
+        paginationState[key] = Math.max(1, currentPage - 1);
+        renderPaginationSection(key);
+    });
+
+    const pageIndicator = document.createElement("span");
+    pageIndicator.className = "pagination-page-indicator muted";
+    pageIndicator.textContent = `Page ${currentPage} of ${totalPages}`;
+
+    const nextButton = document.createElement("button");
+    nextButton.type = "button";
+    nextButton.className = "secondary pagination-button";
+    nextButton.textContent = "Next";
+    nextButton.disabled = currentPage >= totalPages;
+    nextButton.addEventListener("click", () => {
+        paginationState[key] = Math.min(totalPages, currentPage + 1);
+        renderPaginationSection(key);
+    });
+
+    controls.append(previousButton, pageIndicator, nextButton);
+    container.append(summary, controls);
+}
+
+function getPaginatedFlashcards() {
+    return getPaginationSlice(
+        getFilteredFlashcards(),
+        "flashcards",
+        PAGINATION_PAGE_SIZES.flashcards,
+    );
+}
+
+function renderPaginationSection(key) {
+    switch (key) {
+        case "flashcards":
+            renderFlashcards();
+            return;
+        case "collections":
+            renderCollections();
+            return;
+        case "collectionEditor":
+            renderCollectionEditor();
+            return;
+        case "studyHistory":
+            renderStudyHistory();
+            return;
+        case "strugglingCards":
+            renderStrugglingCards();
+            return;
+        case "cardStats":
+            renderCardStats();
+            return;
+        default:
+            renderAll();
+    }
+}
+
 function onStudyPreferencesChange() {
     updateUiPrefs({
         studyMode: elements.studyMode.value,
@@ -371,6 +499,9 @@ async function onFlashcardSubmit(event) {
             };
 
             state.flashcards.push(card);
+            paginationState.flashcards = Math.ceil(
+                state.flashcards.length / PAGINATION_PAGE_SIZES.flashcards,
+            );
 
             let imageUpdate = null;
 
@@ -406,11 +537,12 @@ async function onFlashcardSubmit(event) {
 
 function onFlashcardSearchInput(event) {
     flashcardSearchTerm = event.target.value;
+    resetPaginationPage("flashcards");
     scheduleFlashcardRender();
 }
 
 function onSelectVisibleFlashcards() {
-    getFilteredFlashcards().forEach((card) => {
+    getPaginatedFlashcards().items.forEach((card) => {
         selectedFlashcardIds.add(card.id);
     });
     renderFlashcards();
@@ -443,6 +575,12 @@ async function onCollectionSubmit(event) {
 
     const { collection } = getOrCreateCollectionByName(name, elements.collectionColor.value);
     selectedCollectionId = collection.id;
+    resetPaginationPage("collectionEditor");
+    setPaginationPageForIndex(
+        "collections",
+        PAGINATION_PAGE_SIZES.collections,
+        state.collections.findIndex((item) => item.id === collection.id),
+    );
     updateUiPrefs({ selectedCollectionId: selectedCollectionId || "" });
 
     await persist();
@@ -453,12 +591,14 @@ async function onCollectionSubmit(event) {
 
 function onCollectionSearchInput(event) {
     collectionEditorSearchTerm = event.target.value;
+    resetPaginationPage("collectionEditor");
     scheduleCollectionEditorRender();
 }
 
 function onCollectionFilterChange() {
     collectionEditorMembershipFilter = elements.collectionMembershipFilter.value;
     collectionEditorFilterCollectionId = elements.collectionFilterCollection.value;
+    resetPaginationPage("collectionEditor");
     renderCollectionEditor();
 }
 
@@ -887,6 +1027,11 @@ function renderAll() {
 
 function renderFlashcards() {
     const filteredCards = getFilteredFlashcards();
+    const paginatedCards = getPaginationSlice(
+        filteredCards,
+        "flashcards",
+        PAGINATION_PAGE_SIZES.flashcards,
+    );
     const selectedCount = state.flashcards.filter((card) =>
         selectedFlashcardIds.has(card.id),
     ).length;
@@ -898,11 +1043,11 @@ function renderFlashcards() {
         state.flashcards.length === 0 ? "No flashcards yet." : "No flashcards match your search.";
     elements.flashcardsList.innerHTML = "";
 
-    elements.flashcardSelectVisible.disabled = filteredCards.length === 0;
+    elements.flashcardSelectVisible.disabled = paginatedCards.items.length === 0;
     elements.flashcardClearSelection.disabled = selectedCount === 0;
     elements.flashcardDeleteSelected.disabled = selectedCount === 0;
 
-    filteredCards.forEach((card) => {
+    paginatedCards.items.forEach((card) => {
         const row = document.createElement("div");
         row.className = "item-row selectable-row";
 
@@ -964,16 +1109,30 @@ function renderFlashcards() {
         row.append(left, main, side);
         elements.flashcardsList.appendChild(row);
     });
+
+    renderPaginationControls(elements.flashcardsPagination, {
+        key: "flashcards",
+        pageSize: PAGINATION_PAGE_SIZES.flashcards,
+        totalItems: paginatedCards.totalItems,
+        currentPage: paginatedCards.currentPage,
+        totalPages: paginatedCards.totalPages,
+    });
 }
 
 function renderCollections() {
+    const paginatedCollections = getPaginationSlice(
+        state.collections,
+        "collections",
+        PAGINATION_PAGE_SIZES.collections,
+    );
+
     elements.collectionCount.textContent = `${state.collections.length} total`;
     elements.collectionsEmpty.classList.toggle("hidden", state.collections.length > 0);
     elements.collectionsList.innerHTML = "";
 
     selectedCollectionId = getValidSelectedCollectionId(selectedCollectionId);
 
-    state.collections.forEach((collection) => {
+    paginatedCollections.items.forEach((collection) => {
         const row = document.createElement("div");
         row.className = "item-row";
 
@@ -1017,6 +1176,7 @@ function renderCollections() {
         selectButton.textContent = collection.id === selectedCollectionId ? "Selected" : "Edit";
         selectButton.addEventListener("click", () => {
             selectedCollectionId = collection.id;
+            resetPaginationPage("collectionEditor");
             updateUiPrefs({ selectedCollectionId: selectedCollectionId || "" });
             renderCollections();
             renderCollectionEditor();
@@ -1034,6 +1194,14 @@ function renderCollections() {
         row.append(main, side);
         elements.collectionsList.appendChild(row);
     });
+
+    renderPaginationControls(elements.collectionsPagination, {
+        key: "collections",
+        pageSize: PAGINATION_PAGE_SIZES.collections,
+        totalItems: paginatedCollections.totalItems,
+        currentPage: paginatedCollections.currentPage,
+        totalPages: paginatedCollections.totalPages,
+    });
 }
 
 function renderCollectionEditor() {
@@ -1048,6 +1216,7 @@ function renderCollectionEditor() {
         elements.collectionFlashcardForm.reset();
         elements.collectionCardsEditor.innerHTML = "";
         elements.collectionEditorSummary.textContent = "";
+        elements.collectionEditorPagination.classList.add("hidden");
         return;
     }
 
@@ -1057,19 +1226,26 @@ function renderCollectionEditor() {
     elements.collectionCardsEditor.innerHTML = "";
 
     const filteredCards = getFilteredCollectionEditorCards(collection);
+    const paginatedCards = getPaginationSlice(
+        filteredCards,
+        "collectionEditor",
+        PAGINATION_PAGE_SIZES.collectionEditor,
+    );
     elements.collectionEditorSummary.textContent = `${filteredCards.length} shown / ${state.flashcards.length} total`;
 
     if (state.flashcards.length === 0) {
         elements.collectionCardsEditor.innerHTML = `<div class="empty-state">Create flashcards first.</div>`;
+        elements.collectionEditorPagination.classList.add("hidden");
         return;
     }
 
     if (filteredCards.length === 0) {
         elements.collectionCardsEditor.innerHTML = `<div class="empty-state">No flashcards match the current filters.</div>`;
+        elements.collectionEditorPagination.classList.add("hidden");
         return;
     }
 
-    filteredCards.forEach((card) => {
+    paginatedCards.items.forEach((card) => {
         const wrapper = document.createElement("label");
         wrapper.className = "checkbox-item";
 
@@ -1090,6 +1266,14 @@ function renderCollectionEditor() {
 
         wrapper.append(checkbox, text);
         elements.collectionCardsEditor.appendChild(wrapper);
+    });
+
+    renderPaginationControls(elements.collectionEditorPagination, {
+        key: "collectionEditor",
+        pageSize: PAGINATION_PAGE_SIZES.collectionEditor,
+        totalItems: paginatedCards.totalItems,
+        currentPage: paginatedCards.currentPage,
+        totalPages: paginatedCards.totalPages,
     });
 }
 
@@ -1141,9 +1325,14 @@ function renderStudyLiveInsights() {
 }
 
 function renderStudyHistory() {
-    const historyEntries = [...(state.studyHistory || [])]
-        .sort((left, right) => Date.parse(right.finishedAt) - Date.parse(left.finishedAt))
-        .slice(0, 12);
+    const historyEntries = [...(state.studyHistory || [])].sort(
+        (left, right) => Date.parse(right.finishedAt) - Date.parse(left.finishedAt),
+    );
+    const paginatedHistoryEntries = getPaginationSlice(
+        historyEntries,
+        "studyHistory",
+        PAGINATION_PAGE_SIZES.studyHistory,
+    );
 
     elements.studyHistorySummary.textContent = `${state.studyHistory.length} saved session${state.studyHistory.length === 1 ? "" : "s"}`;
     elements.studyHistoryList.innerHTML = "";
@@ -1154,10 +1343,11 @@ function renderStudyHistory() {
                 "No study sessions yet. Finish a session and it will show up here.",
             ),
         );
+        elements.studyHistoryPagination.classList.add("hidden");
         return;
     }
 
-    historyEntries.forEach((entry) => {
+    paginatedHistoryEntries.items.forEach((entry) => {
         const row = document.createElement("div");
         row.className = "item-row stat-row";
 
@@ -1179,10 +1369,23 @@ function renderStudyHistory() {
         row.append(main, side);
         elements.studyHistoryList.appendChild(row);
     });
+
+    renderPaginationControls(elements.studyHistoryPagination, {
+        key: "studyHistory",
+        pageSize: PAGINATION_PAGE_SIZES.studyHistory,
+        totalItems: paginatedHistoryEntries.totalItems,
+        currentPage: paginatedHistoryEntries.currentPage,
+        totalPages: paginatedHistoryEntries.totalPages,
+    });
 }
 
 function renderStrugglingCards() {
-    const strugglingEntries = getStrugglingCardEntries().slice(0, 10);
+    const strugglingEntries = getStrugglingCardEntries();
+    const paginatedStrugglingEntries = getPaginationSlice(
+        strugglingEntries,
+        "strugglingCards",
+        PAGINATION_PAGE_SIZES.strugglingCards,
+    );
     const studiedCardsCount = getStudiedCardEntries().length;
 
     elements.strugglingCardsSummary.textContent =
@@ -1197,10 +1400,11 @@ function renderStrugglingCards() {
                 "No struggling cards yet. Wrong answers will bubble up here automatically.",
             ),
         );
+        elements.strugglingCardsPagination.classList.add("hidden");
         return;
     }
 
-    strugglingEntries.forEach(({ card, stats }) => {
+    paginatedStrugglingEntries.items.forEach(({ card, stats }) => {
         const row = document.createElement("div");
         row.className = "item-row stat-row";
 
@@ -1222,27 +1426,38 @@ function renderStrugglingCards() {
         row.append(main, side);
         elements.strugglingCardsList.appendChild(row);
     });
+
+    renderPaginationControls(elements.strugglingCardsPagination, {
+        key: "strugglingCards",
+        pageSize: PAGINATION_PAGE_SIZES.strugglingCards,
+        totalItems: paginatedStrugglingEntries.totalItems,
+        currentPage: paginatedStrugglingEntries.currentPage,
+        totalPages: paginatedStrugglingEntries.totalPages,
+    });
 }
 
 function renderCardStats() {
-    const studiedEntries = getStudiedCardEntries()
-        .sort((left, right) => {
-            if (right.stats.timesSeen !== left.stats.timesSeen) {
-                return right.stats.timesSeen - left.stats.timesSeen;
-            }
+    const studiedEntries = getStudiedCardEntries().sort((left, right) => {
+        if (right.stats.timesSeen !== left.stats.timesSeen) {
+            return right.stats.timesSeen - left.stats.timesSeen;
+        }
 
-            const leftAccuracy =
-                left.stats.timesSeen > 0 ? left.stats.timesCorrect / left.stats.timesSeen : 0;
-            const rightAccuracy =
-                right.stats.timesSeen > 0 ? right.stats.timesCorrect / right.stats.timesSeen : 0;
+        const leftAccuracy =
+            left.stats.timesSeen > 0 ? left.stats.timesCorrect / left.stats.timesSeen : 0;
+        const rightAccuracy =
+            right.stats.timesSeen > 0 ? right.stats.timesCorrect / right.stats.timesSeen : 0;
 
-            if (leftAccuracy !== rightAccuracy) {
-                return leftAccuracy - rightAccuracy;
-            }
+        if (leftAccuracy !== rightAccuracy) {
+            return leftAccuracy - rightAccuracy;
+        }
 
-            return left.card.german.localeCompare(right.card.german);
-        })
-        .slice(0, 25);
+        return left.card.german.localeCompare(right.card.german);
+    });
+    const paginatedStudiedEntries = getPaginationSlice(
+        studiedEntries,
+        "cardStats",
+        PAGINATION_PAGE_SIZES.cardStats,
+    );
 
     elements.cardStatsSummary.textContent =
         studiedEntries.length > 0
@@ -1254,10 +1469,11 @@ function renderCardStats() {
         elements.cardStatsList.appendChild(
             createEmptyStateRow("Per-card study stats will appear after you answer some cards."),
         );
+        elements.cardStatsPagination.classList.add("hidden");
         return;
     }
 
-    studiedEntries.forEach(({ card, stats }) => {
+    paginatedStudiedEntries.items.forEach(({ card, stats }) => {
         const row = document.createElement("div");
         row.className = "item-row stat-row";
 
@@ -1278,6 +1494,14 @@ function renderCardStats() {
 
         row.append(main, side);
         elements.cardStatsList.appendChild(row);
+    });
+
+    renderPaginationControls(elements.cardStatsPagination, {
+        key: "cardStats",
+        pageSize: PAGINATION_PAGE_SIZES.cardStats,
+        totalItems: paginatedStudiedEntries.totalItems,
+        currentPage: paginatedStudiedEntries.currentPage,
+        totalPages: paginatedStudiedEntries.totalPages,
     });
 }
 

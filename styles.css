@@ -429,6 +429,31 @@ pre {
     padding-right: 0.25rem;
 }
 
+.pagination-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.9rem;
+}
+
+.pagination-button-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.pagination-button {
+    padding: 0.45rem 0.8rem;
+}
+
+.pagination-summary,
+.pagination-page-indicator {
+    font-size: 0.92rem;
+}
+
 .checkbox-item {
     display: flex;
     gap: 0.75rem;
@@ -656,7 +681,9 @@ pre {
 
     .inline-form,
     .toolbar,
-    .study-prompt-row {
+    .study-prompt-row,
+    .pagination-controls,
+    .pagination-button-group {
         flex-direction: column;
         align-items: stretch;
     }
