@@ -64,12 +64,10 @@ const selectedFlashcardIds = new Set();
 let persistQueue = Promise.resolve(false);
 let flashcardRenderDebounceId = 0;
 let collectionEditorRenderDebounceId = 0;
-let pendingBackupImportResolver = null;
-let lastFocusedElementBeforeBackupImportModal = null;
-let pendingFlashcardDeleteResolver = null;
-let lastFocusedElementBeforeFlashcardDeleteModal = null;
+let pendingActionModalResolver = null;
+let lastFocusedElementBeforeActionModal = null;
+let pendingActionModalContext = null;
 let flashcardDeleteSkipConfirmUntilVisibilityChange = false;
-let pendingFlashcardDeleteContext = null;
 const paginationState = {
     flashcards: 1,
     collections: 1,
@@ -163,19 +161,16 @@ const elements = {
     deleteAllButton: document.getElementById("delete-all-button"),
     importExportMessage: document.getElementById("import-export-message"),
     backupImportModal: document.getElementById("backup-import-modal"),
+    backupImportModalTitle: document.getElementById("backup-import-modal-title"),
+    backupImportModalDescription: document.getElementById("backup-import-modal-description"),
     backupImportModalSummary: document.getElementById("backup-import-modal-summary"),
     backupImportModalWarnings: document.getElementById("backup-import-modal-warnings"),
+    backupImportModalCheckboxRow: document.getElementById("backup-import-modal-checkbox-row"),
+    backupImportModalCheckbox: document.getElementById("backup-import-modal-checkbox"),
     backupImportMergeButton: document.getElementById("backup-import-merge-button"),
     backupImportReplaceButton: document.getElementById("backup-import-replace-button"),
     backupImportCancelButton: document.getElementById("backup-import-cancel-button"),
-    flashcardDeleteModal: document.getElementById("flashcard-delete-modal"),
-    flashcardDeleteModalTitle: document.getElementById("flashcard-delete-modal-title"),
-    flashcardDeleteModalDescription: document.getElementById("flashcard-delete-modal-description"),
-    flashcardDeleteModalSummary: document.getElementById("flashcard-delete-modal-summary"),
-    flashcardDeleteSkipRow: document.getElementById("flashcard-delete-skip-row"),
-    flashcardDeleteSkipCheckbox: document.getElementById("flashcard-delete-skip-checkbox"),
-    flashcardDeleteConfirmButton: document.getElementById("flashcard-delete-confirm-button"),
-    flashcardDeleteCancelButton: document.getElementById("flashcard-delete-cancel-button"),
+    backupImportModalFootnote: document.getElementById("backup-import-modal-footnote"),
 };
 
 const flashcardsUi = createFlashcardsUi({
@@ -365,23 +360,13 @@ function bindEvents() {
     elements.studyFeedbackAudioButton.addEventListener("click", onStudyPronunciationButtonClick);
     elements.studyNextButton.addEventListener("click", onStudyNext);
     elements.studyEndButton.addEventListener("click", endStudySession);
-    elements.backupImportMergeButton.addEventListener("click", () =>
-        closeBackupImportModal("merge"),
-    );
+    elements.backupImportMergeButton.addEventListener("click", () => closeActionModal("primary"));
     elements.backupImportReplaceButton.addEventListener("click", () =>
-        closeBackupImportModal("replace"),
+        closeActionModal("secondary"),
     );
-    elements.backupImportCancelButton.addEventListener("click", () => closeBackupImportModal(null));
-    elements.backupImportModal.addEventListener("click", onBackupImportModalClick);
-    elements.backupImportModal.addEventListener("keydown", onBackupImportModalKeyDown);
-    elements.flashcardDeleteConfirmButton.addEventListener("click", () =>
-        closeFlashcardDeleteModal(true),
-    );
-    elements.flashcardDeleteCancelButton.addEventListener("click", () =>
-        closeFlashcardDeleteModal(false),
-    );
-    elements.flashcardDeleteModal.addEventListener("click", onFlashcardDeleteModalClick);
-    elements.flashcardDeleteModal.addEventListener("keydown", onFlashcardDeleteModalKeyDown);
+    elements.backupImportCancelButton.addEventListener("click", () => closeActionModal(null));
+    elements.backupImportModal.addEventListener("click", onActionModalClick);
+    elements.backupImportModal.addEventListener("keydown", onActionModalKeyDown);
     elements.studyResetButton.addEventListener("click", resetStudyView);
 
     elements.bulkImportButton.addEventListener("click", onBulkImport);
@@ -1110,11 +1095,9 @@ async function onExport() {
 }
 
 async function onDeleteAll() {
-    const confirmed = window.confirm(
-        "Delete all flashcards, collections, images, study progress, session history, and saved preferences? This cannot be undone.",
-    );
+    const selection = await openDeleteAllModal();
 
-    if (!confirmed) {
+    if (selection !== "confirm") {
         showImportExportMessage("Delete All cancelled.", false);
         return;
     }
@@ -1413,80 +1396,54 @@ function finalizeImportState({
 }
 
 function openBackupImportModal(importedState, issues) {
-    if (pendingBackupImportResolver) {
-        closeBackupImportModal(null);
-    }
-
     const totalCards = importedState.flashcards?.length || 0;
     const totalCollections = importedState.collections?.length || 0;
     const totalSessions = importedState.studyHistory?.length || 0;
     const totalCardStats = Object.keys(importedState.cardStats || {}).length;
 
-    elements.backupImportModalSummary.innerHTML = `
-      <div class="modal-summary-grid">
-        <div class="modal-summary-item">
-          <span class="modal-summary-label">Flashcards</span>
-          <div class="modal-summary-value">${escapeHtml(String(totalCards))}</div>
-        </div>
-        <div class="modal-summary-item">
-          <span class="modal-summary-label">Collections</span>
-          <div class="modal-summary-value">${escapeHtml(String(totalCollections))}</div>
-        </div>
-        <div class="modal-summary-item">
-          <span class="modal-summary-label">Saved sessions</span>
-          <div class="modal-summary-value">${escapeHtml(String(totalSessions))}</div>
-        </div>
-        <div class="modal-summary-item">
-          <span class="modal-summary-label">Cards with stats</span>
-          <div class="modal-summary-value">${escapeHtml(String(totalCardStats))}</div>
-        </div>
-      </div>
-    `;
-
-    if (issues.length > 0) {
-        elements.backupImportModalWarnings.textContent = formatImportIssuesSummary(issues);
-        elements.backupImportModalWarnings.classList.remove("hidden");
-    } else {
-        elements.backupImportModalWarnings.textContent = "";
-        elements.backupImportModalWarnings.classList.add("hidden");
-    }
-
-    lastFocusedElementBeforeBackupImportModal =
-        document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    document.body.classList.add("modal-open");
-    elements.backupImportModal.classList.remove("hidden");
-
-    return new Promise((resolve) => {
-        pendingBackupImportResolver = resolve;
-        window.requestAnimationFrame(() => {
-            elements.backupImportMergeButton.focus();
-        });
+    return openActionModal({
+        title: "Import backup",
+        description: "Choose how this backup should be applied.",
+        summaryItems: [
+            { label: "Flashcards", value: String(totalCards) },
+            { label: "Collections", value: String(totalCollections) },
+            { label: "Saved sessions", value: String(totalSessions) },
+            { label: "Cards with stats", value: String(totalCardStats) },
+        ],
+        warningsText: issues.length > 0 ? formatImportIssuesSummary(issues) : "",
+        primaryButtonLabel: "Merge into current data",
+        primaryButtonValue: "merge",
+        secondaryButtonLabel: "Replace current data",
+        secondaryButtonValue: "replace",
+        secondaryButtonIsDanger: true,
+        footnote:
+            "Merge keeps your current data and adds what it can. Replace overwrites everything in the app with the backup.",
     });
 }
 
-function closeBackupImportModal(selection) {
-    if (!pendingBackupImportResolver) {
-        return;
-    }
-
-    const resolver = pendingBackupImportResolver;
-    pendingBackupImportResolver = null;
-
-    elements.backupImportModal.classList.add("hidden");
-    elements.backupImportModalWarnings.textContent = "";
-    elements.backupImportModalWarnings.classList.add("hidden");
-    elements.backupImportModalSummary.innerHTML = "";
-    document.body.classList.remove("modal-open");
-
-    if (lastFocusedElementBeforeBackupImportModal?.focus) {
-        lastFocusedElementBeforeBackupImportModal.focus();
-    }
-    lastFocusedElementBeforeBackupImportModal = null;
-
-    resolver(selection === "merge" || selection === "replace" ? selection : null);
+function openDeleteAllModal() {
+    return openActionModal({
+        title: "Delete all app data",
+        description:
+            "Delete all flashcards, collections, images, study progress, session history, and saved preferences?",
+        summaryItems: [
+            { label: "Flashcards", value: String(state.flashcards?.length || 0) },
+            { label: "Collections", value: String(state.collections?.length || 0) },
+            { label: "Saved sessions", value: String(state.studyHistory?.length || 0) },
+            { label: "Cards with stats", value: String(Object.keys(state.cardStats || {}).length) },
+        ],
+        primaryButtonLabel: "Delete everything",
+        primaryButtonValue: "confirm",
+        primaryButtonIsDanger: true,
+        footnote: "This resets the app completely and cannot be undone.",
+    });
 }
 
 function buildModalSummaryGrid(items) {
+    if (!items.length) {
+        return "";
+    }
+
     return `
       <div class="modal-summary-grid">
         ${items
@@ -1519,8 +1476,8 @@ async function requestFlashcardDeletion(cardIds, { allowSkipPrompt }) {
         return true;
     }
 
-    const confirmed = await openFlashcardDeleteModal(cardsToDelete, { allowSkipPrompt });
-    if (!confirmed) {
+    const selection = await openFlashcardDeleteModal(cardsToDelete, { allowSkipPrompt });
+    if (selection !== "confirm") {
         return false;
     }
 
@@ -1529,88 +1486,139 @@ async function requestFlashcardDeletion(cardIds, { allowSkipPrompt }) {
 }
 
 function openFlashcardDeleteModal(cardsToDelete, { allowSkipPrompt }) {
-    if (pendingFlashcardDeleteResolver) {
-        closeFlashcardDeleteModal(false);
-    }
-
     const isSingleFlashcardDelete = cardsToDelete.length === 1;
     const primaryCard = cardsToDelete[0] || null;
-    const title = isSingleFlashcardDelete ? "Delete flashcard" : "Delete selected flashcards";
-    const description = isSingleFlashcardDelete
-        ? `Delete "${primaryCard?.german || "this flashcard"}"?`
-        : `Delete ${cardsToDelete.length} selected flashcard(s)?`;
-    const summaryItems = isSingleFlashcardDelete
-        ? [{ label: "Flashcard", value: primaryCard?.german || "Unknown" }]
-        : [{ label: "Flashcards", value: String(cardsToDelete.length) }];
 
-    pendingFlashcardDeleteContext = { allowSkipPrompt };
-    elements.flashcardDeleteModalTitle.textContent = title;
-    elements.flashcardDeleteConfirmButton.textContent = isSingleFlashcardDelete
-        ? "Delete flashcard"
-        : `Delete ${cardsToDelete.length} flashcard(s)`;
-    elements.flashcardDeleteModalDescription.textContent = description;
-    elements.flashcardDeleteModalSummary.innerHTML = buildModalSummaryGrid(summaryItems);
-    elements.flashcardDeleteSkipCheckbox.checked = false;
-    elements.flashcardDeleteSkipRow.classList.toggle("hidden", !allowSkipPrompt);
+    return openActionModal({
+        title: isSingleFlashcardDelete ? "Delete flashcard" : "Delete selected flashcards",
+        description: isSingleFlashcardDelete
+            ? `Delete "${primaryCard?.german || "this flashcard"}"?`
+            : `Delete ${cardsToDelete.length} selected flashcard(s)?`,
+        summaryItems: isSingleFlashcardDelete
+            ? [{ label: "Flashcard", value: primaryCard?.german || "Unknown" }]
+            : [{ label: "Flashcards", value: String(cardsToDelete.length) }],
+        primaryButtonLabel: isSingleFlashcardDelete
+            ? "Delete flashcard"
+            : `Delete ${cardsToDelete.length} flashcard(s)`,
+        primaryButtonValue: "confirm",
+        primaryButtonIsDanger: true,
+        showSkipCheckbox: allowSkipPrompt,
+        footnote:
+            "This removes the flashcard from all collections and deletes any saved stats for it.",
+    });
+}
 
-    lastFocusedElementBeforeFlashcardDeleteModal =
+function openActionModal({
+    title,
+    description,
+    summaryItems = [],
+    warningsText = "",
+    primaryButtonLabel,
+    primaryButtonValue,
+    primaryButtonIsDanger = false,
+    secondaryButtonLabel = "",
+    secondaryButtonValue = null,
+    secondaryButtonIsDanger = false,
+    showSkipCheckbox = false,
+    footnote = "",
+}) {
+    if (pendingActionModalResolver) {
+        closeActionModal(null);
+    }
+
+    pendingActionModalContext = {
+        primaryButtonValue,
+        secondaryButtonValue,
+        showSkipCheckbox,
+    };
+
+    elements.backupImportModalTitle.textContent = title;
+    elements.backupImportModalDescription.textContent = description;
+    elements.backupImportModalSummary.innerHTML = buildModalSummaryGrid(summaryItems);
+    elements.backupImportModalWarnings.textContent = warningsText;
+    elements.backupImportModalWarnings.classList.toggle("hidden", !warningsText);
+    elements.backupImportModalCheckbox.checked = false;
+    elements.backupImportModalCheckboxRow.classList.toggle("hidden", !showSkipCheckbox);
+    elements.backupImportModalFootnote.textContent = footnote;
+    elements.backupImportModalFootnote.classList.toggle("hidden", !footnote);
+
+    elements.backupImportMergeButton.textContent = primaryButtonLabel;
+    elements.backupImportMergeButton.classList.toggle("danger", primaryButtonIsDanger);
+    elements.backupImportReplaceButton.textContent = secondaryButtonLabel || "";
+    elements.backupImportReplaceButton.classList.toggle("danger", secondaryButtonIsDanger);
+    elements.backupImportReplaceButton.classList.toggle("hidden", !secondaryButtonLabel);
+
+    lastFocusedElementBeforeActionModal =
         document.activeElement instanceof HTMLElement ? document.activeElement : null;
     document.body.classList.add("modal-open");
-    elements.flashcardDeleteModal.classList.remove("hidden");
+    elements.backupImportModal.classList.remove("hidden");
 
     return new Promise((resolve) => {
-        pendingFlashcardDeleteResolver = resolve;
+        pendingActionModalResolver = resolve;
         window.requestAnimationFrame(() => {
-            elements.flashcardDeleteConfirmButton.focus();
+            elements.backupImportMergeButton.focus();
         });
     });
 }
 
-function closeFlashcardDeleteModal(confirmed) {
-    if (!pendingFlashcardDeleteResolver) {
+function closeActionModal(selection) {
+    if (!pendingActionModalResolver) {
         return;
     }
 
-    const resolver = pendingFlashcardDeleteResolver;
-    pendingFlashcardDeleteResolver = null;
+    const resolver = pendingActionModalResolver;
+    const modalContext = pendingActionModalContext;
+    pendingActionModalResolver = null;
+    pendingActionModalContext = null;
+
+    let resolvedValue = null;
+    if (selection === "primary") {
+        resolvedValue = modalContext?.primaryButtonValue || null;
+    } else if (selection === "secondary") {
+        resolvedValue = modalContext?.secondaryButtonValue || null;
+    }
 
     if (
-        confirmed &&
-        pendingFlashcardDeleteContext?.allowSkipPrompt &&
-        elements.flashcardDeleteSkipCheckbox.checked
+        resolvedValue &&
+        modalContext?.showSkipCheckbox &&
+        elements.backupImportModalCheckbox.checked
     ) {
         flashcardDeleteSkipConfirmUntilVisibilityChange = true;
     }
 
-    pendingFlashcardDeleteContext = null;
-    elements.flashcardDeleteModal.classList.add("hidden");
-    elements.flashcardDeleteModalSummary.innerHTML = "";
-    elements.flashcardDeleteSkipCheckbox.checked = false;
-    elements.flashcardDeleteSkipRow.classList.add("hidden");
+    elements.backupImportModal.classList.add("hidden");
+    elements.backupImportModalSummary.innerHTML = "";
+    elements.backupImportModalWarnings.textContent = "";
+    elements.backupImportModalWarnings.classList.add("hidden");
+    elements.backupImportModalCheckbox.checked = false;
+    elements.backupImportModalCheckboxRow.classList.add("hidden");
+    elements.backupImportReplaceButton.classList.remove("hidden");
+    elements.backupImportModalFootnote.textContent = "";
+    elements.backupImportModalFootnote.classList.add("hidden");
     document.body.classList.remove("modal-open");
 
-    if (lastFocusedElementBeforeFlashcardDeleteModal?.focus) {
-        lastFocusedElementBeforeFlashcardDeleteModal.focus();
+    if (lastFocusedElementBeforeActionModal?.focus) {
+        lastFocusedElementBeforeActionModal.focus();
     }
-    lastFocusedElementBeforeFlashcardDeleteModal = null;
+    lastFocusedElementBeforeActionModal = null;
 
-    resolver(Boolean(confirmed));
+    resolver(resolvedValue);
 }
 
-function onBackupImportModalClick(event) {
+function onActionModalClick(event) {
     if (event.target === elements.backupImportModal) {
-        closeBackupImportModal(null);
+        closeActionModal(null);
     }
 }
 
-function onBackupImportModalKeyDown(event) {
+function onActionModalKeyDown(event) {
     if (elements.backupImportModal.classList.contains("hidden")) {
         return;
     }
 
     if (event.key === "Escape") {
         event.preventDefault();
-        closeBackupImportModal(null);
+        closeActionModal(null);
         return;
     }
 
@@ -1619,56 +1627,10 @@ function onBackupImportModalKeyDown(event) {
     }
 
     const focusableElements = [
+        elements.backupImportCancelButton,
+        elements.backupImportModalCheckbox,
         elements.backupImportMergeButton,
         elements.backupImportReplaceButton,
-        elements.backupImportCancelButton,
-    ].filter((element) => element && !element.disabled);
-
-    if (focusableElements.length === 0) {
-        return;
-    }
-
-    const firstElement = focusableElements[0];
-    const lastElement = focusableElements[focusableElements.length - 1];
-    const activeElement = document.activeElement;
-
-    if (event.shiftKey && activeElement === firstElement) {
-        event.preventDefault();
-        lastElement.focus();
-        return;
-    }
-
-    if (!event.shiftKey && activeElement === lastElement) {
-        event.preventDefault();
-        firstElement.focus();
-    }
-}
-
-function onFlashcardDeleteModalClick(event) {
-    if (event.target === elements.flashcardDeleteModal) {
-        closeFlashcardDeleteModal(false);
-    }
-}
-
-function onFlashcardDeleteModalKeyDown(event) {
-    if (elements.flashcardDeleteModal.classList.contains("hidden")) {
-        return;
-    }
-
-    if (event.key === "Escape") {
-        event.preventDefault();
-        closeFlashcardDeleteModal(false);
-        return;
-    }
-
-    if (event.key !== "Tab") {
-        return;
-    }
-
-    const focusableElements = [
-        elements.flashcardDeleteConfirmButton,
-        elements.flashcardDeleteCancelButton,
-        elements.flashcardDeleteSkipCheckbox,
     ].filter((element) => element && !element.disabled && element.offsetParent !== null);
 
     if (focusableElements.length === 0) {

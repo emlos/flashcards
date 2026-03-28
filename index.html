@@ -350,38 +350,20 @@ COLLECTION\tcollection-id\tencodedName\tcardId1,cardId2,cardId3\tencodedColor</p
       <div class="section-row modal-header-row">
         <h3 id="backup-import-modal-title">Import backup</h3>
         <button id="backup-import-cancel-button" type="button" class="secondary modal-close-button"
-          aria-label="Cancel backup import">Cancel</button>
+          aria-label="Close modal">Cancel</button>
       </div>
       <p id="backup-import-modal-description" class="muted">Choose how this backup should be applied.</p>
       <div id="backup-import-modal-summary" class="modal-summary"></div>
       <div id="backup-import-modal-warnings" class="status-message error hidden"></div>
+      <label id="backup-import-modal-checkbox-row" class="modal-checkbox-row hidden">
+        <input id="backup-import-modal-checkbox" type="checkbox" />
+        <span>Don't ask again</span>
+      </label>
       <div class="modal-actions">
         <button id="backup-import-merge-button" type="button">Merge into current data</button>
         <button id="backup-import-replace-button" type="button" class="danger">Replace current data</button>
       </div>
-      <p class="muted modal-footnote">Merge keeps your current data and adds what it can. Replace overwrites everything in the app with the backup.</p>
-    </div>
-  </div>
-
-
-  <div id="flashcard-delete-modal" class="modal-overlay hidden" role="dialog" aria-modal="true"
-    aria-labelledby="flashcard-delete-modal-title" aria-describedby="flashcard-delete-modal-description">
-    <div class="modal-card">
-      <div class="section-row modal-header-row">
-        <h3 id="flashcard-delete-modal-title">Delete flashcard</h3>
-        <button id="flashcard-delete-cancel-button" type="button" class="secondary modal-close-button"
-          aria-label="Cancel flashcard deletion">Cancel</button>
-      </div>
-      <p id="flashcard-delete-modal-description" class="muted">Are you sure you want to delete this flashcard?</p>
-      <div id="flashcard-delete-modal-summary" class="modal-summary"></div>
-      <label id="flashcard-delete-skip-row" class="modal-checkbox-row hidden">
-        <input id="flashcard-delete-skip-checkbox" type="checkbox" />
-        <span>Don't ask again</span>
-      </label>
-      <div class="modal-actions">
-        <button id="flashcard-delete-confirm-button" type="button" class="danger">Delete flashcard</button>
-      </div>
-      <p class="muted modal-footnote">This removes the flashcard from all collections and deletes any saved stats for it.</p>
+      <p id="backup-import-modal-footnote" class="muted modal-footnote">Merge keeps your current data and adds what it can. Replace overwrites everything in the app with the backup.</p>
     </div>
   </div>
 
