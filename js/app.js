@@ -3,6 +3,7 @@ import {
     loadState,
     saveState,
     replaceState,
+    resetStoredAppData,
     saveFlashcardImage,
     createExportState,
     loadUiPrefs,
@@ -123,6 +124,7 @@ const elements = {
     backupImportFile: document.getElementById("backup-import-file"),
     backupImportButton: document.getElementById("backup-import-button"),
     exportButton: document.getElementById("export-button"),
+    deleteAllButton: document.getElementById("delete-all-button"),
     importExportMessage: document.getElementById("import-export-message"),
 };
 
@@ -191,6 +193,7 @@ function bindEvents() {
     elements.bulkImportButton.addEventListener("click", onBulkImport);
     elements.backupImportButton.addEventListener("click", onBackupImport);
     elements.exportButton.addEventListener("click", onExport);
+    elements.deleteAllButton.addEventListener("click", onDeleteAll);
 }
 
 function switchTab(tabName) {
@@ -643,6 +646,50 @@ async function onExport() {
         showImportExportMessage("Export created.", true);
     } catch (error) {
         showImportExportMessage(error.message || "Export failed.", false);
+    }
+}
+
+async function onDeleteAll() {
+    const confirmed = window.confirm(
+        "Delete all flashcards, collections, images, study progress, session history, and saved preferences? This cannot be undone.",
+    );
+
+    if (!confirmed) {
+        showImportExportMessage("Delete All cancelled.", false);
+        return;
+    }
+
+    try {
+        await persistQueue.catch(() => false);
+        state = await resetStoredAppData();
+        persistQueue = Promise.resolve(true);
+        uiPrefs = loadUiPrefs();
+        selectedCollectionId = null;
+        selectedStudyCollectionIds = new Set([STUDY_ALL_COLLECTION_ID]);
+        flashcardSearchTerm = "";
+        collectionEditorSearchTerm = "";
+        collectionEditorMembershipFilter = "all";
+        collectionEditorFilterCollectionId = "";
+        editingFlashcardId = null;
+        selectedFlashcardIds.clear();
+        clearAppStatusMessage();
+
+        elements.flashcardForm.reset();
+        elements.collectionForm.reset();
+        elements.collectionFlashcardForm.reset();
+        elements.bulkImportFile.value = "";
+        elements.backupImportFile.value = "";
+        elements.flashcardSearch.value = "";
+        elements.collectionSearch.value = "";
+        elements.collectionMembershipFilter.value = "all";
+        elements.collectionFilterCollection.value = "";
+
+        applyUiPrefsToControls();
+        finalizeImportState({ resetStudySelection: true, resetSelectedCollection: true });
+        showImportExportMessage("Everything was deleted and the app was reset.", true);
+    } catch (error) {
+        console.error("Failed to delete all app data.", error);
+        showImportExportMessage(error.message || "Could not delete all app data.", false);
     }
 }
 

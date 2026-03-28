@@ -291,7 +291,11 @@
         <div class="card">
           <h3>Export</h3>
           <p>Export all flashcards, collections, and study stats as a TXT file.</p>
-          <button id="export-button" type="button">Export full backup</button>
+          <div class="toolbar toolbar-wrap import-export-actions">
+            <button id="export-button" type="button">Export full backup</button>
+            <button id="delete-all-button" type="button" class="danger">Delete All</button>
+          </div>
+          <p class="muted">Delete All resets the app completely: flashcards, collections, images, study progress, session history, and saved preferences.</p>
         </div>
 
         <div class="card">

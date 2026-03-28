@@ -172,6 +172,15 @@ export async function replaceState(nextState) {
     return attachStoredImagesToState(database, sanitizeState(nextState));
 }
 
+export async function resetStoredAppData() {
+    const emptyState = createEmptyState();
+    const database = await openDatabase();
+    await writeCompleteState(database, emptyState, { replaceImages: true });
+    clearUiPrefs();
+    clearLegacyState();
+    return emptyState;
+}
+
 export async function saveFlashcardImage(cardId, imageSource) {
     const blob = await imageSourceToBlob(imageSource);
     const database = await openDatabase();
@@ -220,6 +229,14 @@ export function saveUiPrefs(prefs) {
         localStorage.setItem(UI_PREFS_KEY, JSON.stringify(sanitizeUiPrefs(prefs)));
     } catch (error) {
         console.warn("Failed to save UI preferences.", error);
+    }
+}
+
+export function clearUiPrefs() {
+    try {
+        localStorage.removeItem(UI_PREFS_KEY);
+    } catch (error) {
+        console.warn("Failed to clear UI preferences.", error);
     }
 }
 

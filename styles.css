@@ -219,6 +219,10 @@ pre {
   flex-wrap: wrap;
 }
 
+.import-export-actions {
+  margin-bottom: 0.5rem;
+}
+
 .filter-grid {
   display: grid;
   gap: 0.75rem;
