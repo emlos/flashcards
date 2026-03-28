@@ -41,6 +41,23 @@ function parseBackupEnglishAnswers(value) {
     return [];
 }
 
+function parseCollectionIdsField(value) {
+    return String(value || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+}
+
+function parsePositiveInteger(value) {
+    const parsed = Number.parseInt(String(value || "").trim(), 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function parseNonNegativeNumber(value) {
+    const parsed = Number(String(value || "").trim());
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
 export function parseBulkWords(text) {
     const lines = text
         .split(/\r?\n/)
@@ -93,7 +110,7 @@ export function parseBulkWords(text) {
 export function exportBackupText(state) {
     const lines = [];
 
-    for (const card of state.flashcards) {
+    for (const card of state.flashcards || []) {
         lines.push(
             [
                 "CARD",
@@ -105,7 +122,7 @@ export function exportBackupText(state) {
         );
     }
 
-    for (const collection of state.collections) {
+    for (const collection of state.collections || []) {
         lines.push(
             [
                 "COLLECTION",
@@ -113,6 +130,35 @@ export function exportBackupText(state) {
                 encodeField(collection.name),
                 Array.isArray(collection.cardIds) ? collection.cardIds.join(",") : "",
                 encodeField(collection.color || "#64748b"),
+            ].join("\t"),
+        );
+    }
+
+    for (const [cardId, stats] of Object.entries(state.cardStats || {})) {
+        lines.push(
+            [
+                "CARDSTAT",
+                cardId,
+                String(stats?.timesSeen || 0),
+                String(stats?.timesCorrect || 0),
+                encodeField(stats?.lastSeenAt || ""),
+                encodeField(stats?.lastCorrectAt || ""),
+            ].join("\t"),
+        );
+    }
+
+    for (const session of state.studyHistory || []) {
+        lines.push(
+            [
+                "SESSION",
+                session.id,
+                encodeField(session.finishedAt || ""),
+                encodeField(session.collectionLabel || "All flashcards"),
+                Array.isArray(session.collectionIds) ? session.collectionIds.join(",") : "",
+                session.mode || "de-en",
+                String(session.score || 0),
+                String(session.answeredCount || 0),
+                String(session.totalCards || 0),
             ].join("\t"),
         );
     }
@@ -128,6 +174,8 @@ export function parseBackupText(text) {
 
     const flashcards = [];
     const collections = [];
+    const studyHistory = [];
+    const cardStats = {};
 
     for (const line of lines) {
         const parts = line.split("\t");
@@ -152,8 +200,34 @@ export function parseBackupText(text) {
             collections.push({
                 id: parts[1],
                 name: decodeField(parts[2]),
-                cardIds: parts[3] ? parts[3].split(",").filter(Boolean) : [],
+                cardIds: parts[3] ? parseCollectionIdsField(parts[3]) : [],
                 color: parts[4] ? decodeField(parts[4]) : "#64748b",
+            });
+        } else if (type === "CARDSTAT") {
+            if (parts.length < 4) {
+                throw new Error(`Invalid CARDSTAT line: "${line}"`);
+            }
+
+            cardStats[parts[1]] = {
+                timesSeen: parsePositiveInteger(parts[2]),
+                timesCorrect: parsePositiveInteger(parts[3]),
+                lastSeenAt: parts[4] ? decodeField(parts[4]) : "",
+                lastCorrectAt: parts[5] ? decodeField(parts[5]) : "",
+            };
+        } else if (type === "SESSION") {
+            if (parts.length < 9) {
+                throw new Error(`Invalid SESSION line: "${line}"`);
+            }
+
+            studyHistory.push({
+                id: parts[1],
+                finishedAt: decodeField(parts[2]),
+                collectionLabel: decodeField(parts[3]),
+                collectionIds: parseCollectionIdsField(parts[4]),
+                mode: parts[5],
+                score: parseNonNegativeNumber(parts[6]),
+                answeredCount: parsePositiveInteger(parts[7]),
+                totalCards: parsePositiveInteger(parts[8]),
             });
         } else {
             throw new Error(`Unknown line type: "${line}"`);
@@ -165,5 +239,11 @@ export function parseBackupText(text) {
         collection.cardIds = collection.cardIds.filter((id) => cardIds.has(id));
     }
 
-    return { flashcards, collections };
+    for (const cardId of Object.keys(cardStats)) {
+        if (!cardIds.has(cardId)) {
+            delete cardStats[cardId];
+        }
+    }
+
+    return { flashcards, collections, studyHistory, cardStats };
 }

@@ -607,3 +607,26 @@ pre {
     align-items: flex-start;
   }
 }
+
+.app-status-message {
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.study-insights-grid {
+  align-items: start;
+}
+
+.stat-row {
+  align-items: center;
+}
+
+.stat-side {
+  min-width: 11rem;
+  text-align: right;
+}
+
+.stat-score {
+  font-weight: bold;
+  font-size: 1.05rem;
+}

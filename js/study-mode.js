@@ -142,7 +142,12 @@ function evaluateAnswer({ input, correctAnswers, expectsGermanAnswer }) {
     return bestResult;
 }
 
-function evaluateAgainstSingleAnswer({ input, normalizedInput, correctAnswer, expectsGermanAnswer }) {
+function evaluateAgainstSingleAnswer({
+    input,
+    normalizedInput,
+    correctAnswer,
+    expectsGermanAnswer,
+}) {
     const normalizedAnswer = normalizeBasic(correctAnswer);
 
     if (!normalizedInput) {
@@ -191,7 +196,12 @@ function evaluateAgainstSingleAnswer({ input, normalizedInput, correctAnswer, ex
         }
     }
 
-    const closeMatch = matchCloseSpelling(canonicalInput, canonicalAnswer, correctAnswer, expectsGermanAnswer);
+    const closeMatch = matchCloseSpelling(
+        canonicalInput,
+        canonicalAnswer,
+        correctAnswer,
+        expectsGermanAnswer,
+    );
 
     if (closeMatch) {
         return closeMatch;
@@ -272,7 +282,9 @@ function normalizeForComparison(value) {
 
 function splitGermanArticle(value) {
     const normalized = normalizeBasic(value);
-    const match = normalized.match(/^(der|die|das|den|dem|des|ein|eine|einen|einem|einer|eines|kein|keine|keinen|keinem|keiner|keines)\s+(.+)$/u);
+    const match = normalized.match(
+        /^(der|die|das|den|dem|des|ein|eine|einen|einem|einer|eines|kein|keine|keinen|keinem|keiner|keines)\s+(.+)$/u,
+    );
 
     if (!match) {
         return { article: "", remainder: normalized };

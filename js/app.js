@@ -1,4 +1,11 @@
-import { loadState, saveState, replaceState } from "./storage.js";
+import {
+    createEmptyState,
+    loadState,
+    saveState,
+    replaceState,
+    loadUiPrefs,
+    saveUiPrefs,
+} from "./storage.js";
 import { parseBulkWords, exportBackupText, parseBackupText } from "./import-export.js";
 import {
     createStudySession,
@@ -23,18 +30,25 @@ const DEFAULT_COLLECTION_COLORS = [
     "#65a30d",
 ];
 
-let state = loadState();
-let selectedCollectionId = null;
+let state = createEmptyState();
+let uiPrefs = loadUiPrefs();
+let selectedCollectionId = uiPrefs.selectedCollectionId || null;
 let studySession = null;
 let flashcardSearchTerm = "";
 let collectionEditorSearchTerm = "";
 let collectionEditorMembershipFilter = "all";
 let collectionEditorFilterCollectionId = "";
 let editingFlashcardId = null;
-let selectedStudyCollectionIds = new Set([STUDY_ALL_COLLECTION_ID]);
+let selectedStudyCollectionIds = new Set(
+    uiPrefs.selectedStudyCollectionIds.length > 0
+        ? uiPrefs.selectedStudyCollectionIds
+        : [STUDY_ALL_COLLECTION_ID],
+);
 const selectedFlashcardIds = new Set();
+let persistQueue = Promise.resolve(false);
 
 const elements = {
+    appStatusMessage: document.getElementById("app-status-message"),
     tabButtons: Array.from(document.querySelectorAll(".tab-button")),
     tabPanels: Array.from(document.querySelectorAll(".tab-panel")),
 
@@ -91,6 +105,12 @@ const elements = {
     studyEndButton: document.getElementById("study-end-button"),
     studyResultText: document.getElementById("study-result-text"),
     studyResetButton: document.getElementById("study-reset-button"),
+    studyHistorySummary: document.getElementById("study-history-summary"),
+    studyHistoryList: document.getElementById("study-history-list"),
+    strugglingCardsSummary: document.getElementById("struggling-cards-summary"),
+    strugglingCardsList: document.getElementById("struggling-cards-list"),
+    cardStatsSummary: document.getElementById("card-stats-summary"),
+    cardStatsList: document.getElementById("card-stats-list"),
 
     bulkImportFile: document.getElementById("bulk-import-file"),
     bulkImportButton: document.getElementById("bulk-import-button"),
@@ -100,9 +120,40 @@ const elements = {
     importExportMessage: document.getElementById("import-export-message"),
 };
 
+applyUiPrefsToControls();
 bindEvents();
 setCollectionColorInputDefault();
-renderAll();
+void initApp();
+
+async function initApp() {
+    try {
+        state = await loadState();
+        clearAppStatusMessage();
+    } catch (error) {
+        console.error("Failed to load app data.", error);
+        state = createEmptyState();
+        showAppStatusMessage(
+            "Could not load your saved data from IndexedDB. The app is running with an empty in-memory state until storage works again.",
+            false,
+        );
+    }
+
+    sanitizeStudyCollectionSelection();
+    const validSelectedCollectionId = getValidSelectedCollectionId(selectedCollectionId);
+    if (validSelectedCollectionId !== selectedCollectionId) {
+        selectedCollectionId = validSelectedCollectionId;
+        updateUiPrefs({ selectedCollectionId: selectedCollectionId || "" });
+    } else {
+        selectedCollectionId = validSelectedCollectionId;
+    }
+    updateUiPrefs({
+        selectedCollectionId: selectedCollectionId || "",
+        selectedStudyCollectionIds: [...selectedStudyCollectionIds],
+    });
+    applyUiPrefsToControls();
+    renderAll();
+    switchTab(uiPrefs.activeTab || "flashcards");
+}
 
 function bindEvents() {
     elements.tabButtons.forEach((button) => {
@@ -123,6 +174,8 @@ function bindEvents() {
 
     elements.studySetupForm.addEventListener("submit", onStudySetupSubmit);
     elements.studyCollectionOptions.addEventListener("change", onStudyCollectionOptionsChange);
+    elements.studyMode.addEventListener("change", onStudyPreferencesChange);
+    elements.studyCardLimit.addEventListener("input", onStudyPreferencesChange);
     elements.studyAnswerForm.addEventListener("submit", onStudyAnswerSubmit);
     elements.studyGermanCharacters.addEventListener("click", onStudyGermanCharacterClick);
     elements.studyNextButton.addEventListener("click", onStudyNext);
@@ -135,12 +188,23 @@ function bindEvents() {
 }
 
 function switchTab(tabName) {
+    const nextTab = tabName || "flashcards";
+
     elements.tabButtons.forEach((button) => {
-        button.classList.toggle("active", button.dataset.tab === tabName);
+        button.classList.toggle("active", button.dataset.tab === nextTab);
     });
 
     elements.tabPanels.forEach((panel) => {
-        panel.classList.toggle("active", panel.id === `tab-${tabName}`);
+        panel.classList.toggle("active", panel.id === `tab-${nextTab}`);
+    });
+
+    updateUiPrefs({ activeTab: nextTab });
+}
+
+function onStudyPreferencesChange() {
+    updateUiPrefs({
+        studyMode: elements.studyMode.value,
+        studyCardLimit: elements.studyCardLimit.value.trim(),
     });
 }
 
@@ -181,7 +245,7 @@ async function onFlashcardSubmit(event) {
         });
     }
 
-    persist();
+    await persist();
     elements.flashcardForm.reset();
     renderAll();
 }
@@ -223,7 +287,7 @@ function onDeleteSelectedFlashcards() {
     deleteFlashcards(idsToDelete);
 }
 
-function onCollectionSubmit(event) {
+async function onCollectionSubmit(event) {
     event.preventDefault();
 
     const name = elements.collectionName.value.trim();
@@ -233,8 +297,9 @@ function onCollectionSubmit(event) {
 
     const { collection } = getOrCreateCollectionByName(name, elements.collectionColor.value);
     selectedCollectionId = collection.id;
+    updateUiPrefs({ selectedCollectionId: selectedCollectionId || "" });
 
-    persist();
+    await persist();
     elements.collectionForm.reset();
     setCollectionColorInputDefault();
     renderAll();
@@ -282,7 +347,7 @@ async function onCollectionFlashcardSubmit(event) {
             console.info(
                 `[Collection add] Reused existing card "${card.german}" in "${collection.name}". Added meanings: ${
                     added.length > 0 ? added.join(", ") : "none"
-                }.`
+                }.`,
             );
         }
     } else {
@@ -297,7 +362,7 @@ async function onCollectionFlashcardSubmit(event) {
 
     ensureCardInCollection(collection.id, card.id);
 
-    persist();
+    await persist();
     elements.collectionFlashcardForm.reset();
     renderAll();
 }
@@ -308,8 +373,16 @@ function onStudySetupSubmit(event) {
     const mode = elements.studyMode.value;
     const cardLimit = parseStudyCardLimit(elements.studyCardLimit.value);
 
+    updateUiPrefs({
+        studyMode: mode,
+        studyCardLimit: elements.studyCardLimit.value.trim(),
+        selectedStudyCollectionIds: [...selectedStudyCollectionIds],
+    });
+
     if (Number.isNaN(cardLimit)) {
-        showStudySetupMessage("Enter a whole number greater than 0 for the card limit, or leave it blank.");
+        showStudySetupMessage(
+            "Enter a whole number greater than 0 for the card limit, or leave it blank.",
+        );
         return;
     }
 
@@ -326,6 +399,11 @@ function onStudySetupSubmit(event) {
 
     showStudySetupMessage("");
     studySession = createStudySession(cards, mode);
+    studySession.collectionIds = [...selectedStudyCollectionIds];
+    studySession.collectionLabel = getStudyCollectionSummaryText();
+    studySession.startedAt = new Date().toISOString();
+    studySession.answeredCount = 0;
+    studySession.historyRecorded = false;
 
     if (cardLimit && cardLimit < studySession.cards.length) {
         studySession.cards = studySession.cards.slice(0, cardLimit);
@@ -336,24 +414,34 @@ function onStudySetupSubmit(event) {
     renderStudyQuestion();
 }
 
-function onStudyAnswerSubmit(event) {
+async function onStudyAnswerSubmit(event) {
     event.preventDefault();
 
     if (!studySession || studySession.answered) {
         return;
     }
 
+    const currentCard = studySession.cards[studySession.currentIndex] || null;
     const result = submitStudyAnswer(studySession, elements.studyAnswer.value);
 
     if (!result) {
         return;
     }
 
+    if (currentCard) {
+        recordCardStudyResult(currentCard.id, result);
+    }
+
+    studySession.answeredCount = (studySession.answeredCount || 0) + 1;
+
     elements.studyFeedback.textContent = result.message;
     elements.studyFeedbackNote.textContent = result.note;
     elements.studyFeedback.className = `study-feedback ${result.feedbackClass}`;
     elements.studyNextButton.classList.remove("hidden");
     elements.studyAnswer.disabled = true;
+
+    await persist();
+    renderStudyInsights();
 }
 
 function onStudyNext() {
@@ -478,7 +566,7 @@ async function onBulkImport() {
             console.groupEnd();
         }
 
-        persist();
+        await persist();
         renderAll();
 
         showImportExportMessage(
@@ -502,8 +590,13 @@ async function onBackupImport() {
 
     try {
         const text = await file.text();
-        state = replaceState(parseBackupText(text));
-        selectedCollectionId = state.collections[0]?.id || null;
+        state = await replaceState(parseBackupText(text));
+        selectedCollectionId = getValidSelectedCollectionId(state.collections[0]?.id || null);
+        selectedStudyCollectionIds = new Set([STUDY_ALL_COLLECTION_ID]);
+        updateUiPrefs({
+            selectedCollectionId: selectedCollectionId || "",
+            selectedStudyCollectionIds: [STUDY_ALL_COLLECTION_ID],
+        });
         selectedFlashcardIds.clear();
         resetStudyView();
         setCollectionColorInputDefault();
@@ -527,19 +620,20 @@ function renderAll() {
     renderCollections();
     renderCollectionEditor();
     renderStudySetup();
+    renderStudyInsights();
 }
 
 function renderFlashcards() {
     const filteredCards = getFilteredFlashcards();
-    const selectedCount = state.flashcards.filter((card) => selectedFlashcardIds.has(card.id)).length;
+    const selectedCount = state.flashcards.filter((card) =>
+        selectedFlashcardIds.has(card.id),
+    ).length;
 
     elements.flashcardCount.textContent = `${filteredCards.length} shown / ${state.flashcards.length} total`;
     elements.flashcardSelectionSummary.textContent = `${selectedCount} selected`;
     elements.flashcardsEmpty.classList.toggle("hidden", filteredCards.length > 0);
     elements.flashcardsEmpty.textContent =
-        state.flashcards.length === 0
-            ? "No flashcards yet."
-            : "No flashcards match your search.";
+        state.flashcards.length === 0 ? "No flashcards yet." : "No flashcards match your search.";
     elements.flashcardsList.innerHTML = "";
 
     elements.flashcardSelectVisible.disabled = filteredCards.length === 0;
@@ -614,9 +708,7 @@ function renderCollections() {
     elements.collectionsEmpty.classList.toggle("hidden", state.collections.length > 0);
     elements.collectionsList.innerHTML = "";
 
-    if (!selectedCollectionId && state.collections.length > 0) {
-        selectedCollectionId = state.collections[0].id;
-    }
+    selectedCollectionId = getValidSelectedCollectionId(selectedCollectionId);
 
     state.collections.forEach((collection) => {
         const row = document.createElement("div");
@@ -662,6 +754,7 @@ function renderCollections() {
         selectButton.textContent = collection.id === selectedCollectionId ? "Selected" : "Edit";
         selectButton.addEventListener("click", () => {
             selectedCollectionId = collection.id;
+            updateUiPrefs({ selectedCollectionId: selectedCollectionId || "" });
             renderCollections();
             renderCollectionEditor();
         });
@@ -738,6 +831,7 @@ function renderCollectionEditor() {
 function renderStudySetup() {
     sanitizeStudyCollectionSelection();
     elements.studyCollectionOptions.innerHTML = "";
+    applyUiPrefsToControls();
 
     elements.studyCollectionOptions.appendChild(
         createStudyCollectionOption({
@@ -763,11 +857,159 @@ function renderStudySetup() {
     if (state.collections.length === 0) {
         const empty = document.createElement("div");
         empty.className = "multiselect-empty muted";
-        empty.textContent = "No saved collections yet. “All flashcards” will still study every card you have.";
+        empty.textContent =
+            "No saved collections yet. “All flashcards” will still study every card you have.";
         elements.studyCollectionOptions.appendChild(empty);
     }
 
     elements.studyCollectionSummary.textContent = getStudyCollectionSummaryText();
+}
+
+function renderStudyInsights() {
+    renderStudyHistory();
+    renderStrugglingCards();
+    renderCardStats();
+}
+
+function renderStudyHistory() {
+    const historyEntries = [...(state.studyHistory || [])]
+        .sort((left, right) => Date.parse(right.finishedAt) - Date.parse(left.finishedAt))
+        .slice(0, 12);
+
+    elements.studyHistorySummary.textContent = `${state.studyHistory.length} saved session${state.studyHistory.length === 1 ? "" : "s"}`;
+    elements.studyHistoryList.innerHTML = "";
+
+    if (historyEntries.length === 0) {
+        elements.studyHistoryList.appendChild(
+            createEmptyStateRow(
+                "No study sessions yet. Finish a session and it will show up here.",
+            ),
+        );
+        return;
+    }
+
+    historyEntries.forEach((entry) => {
+        const row = document.createElement("div");
+        row.className = "item-row stat-row";
+
+        const main = document.createElement("div");
+        main.className = "item-row-main";
+        main.innerHTML = `
+      <div class="item-title">${escapeHtml(entry.collectionLabel || "All flashcards")}</div>
+      <div class="item-subtitle">${escapeHtml(formatSessionTimestamp(entry.finishedAt))}</div>
+      <div class="item-tags">${escapeHtml(formatStudyModeLabel(entry.mode))} · Answered ${entry.answeredCount}/${entry.totalCards}</div>
+    `;
+
+        const side = document.createElement("div");
+        side.className = "item-row-side stat-side";
+        side.innerHTML = `
+      <div class="stat-score">${escapeHtml(formatStudyScore(entry.score))} / ${escapeHtml(formatStudyScore(entry.totalCards))}</div>
+      <div class="item-subtitle">${escapeHtml(formatSessionCompletionLabel(entry))}</div>
+    `;
+
+        row.append(main, side);
+        elements.studyHistoryList.appendChild(row);
+    });
+}
+
+function renderStrugglingCards() {
+    const strugglingEntries = getStrugglingCardEntries().slice(0, 10);
+    const studiedCardsCount = getStudiedCardEntries().length;
+
+    elements.strugglingCardsSummary.textContent =
+        studiedCardsCount > 0
+            ? `${studiedCardsCount} card${studiedCardsCount === 1 ? "" : "s"} with study stats`
+            : "No card stats yet";
+    elements.strugglingCardsList.innerHTML = "";
+
+    if (strugglingEntries.length === 0) {
+        elements.strugglingCardsList.appendChild(
+            createEmptyStateRow(
+                "No struggling cards yet. Wrong answers will bubble up here automatically.",
+            ),
+        );
+        return;
+    }
+
+    strugglingEntries.forEach(({ card, stats }) => {
+        const row = document.createElement("div");
+        row.className = "item-row stat-row";
+
+        const main = document.createElement("div");
+        main.className = "item-row-main";
+        main.innerHTML = `
+      <div class="item-title">${escapeHtml(card.german)}</div>
+      <div class="item-subtitle">${escapeHtml((card.englishAnswers || []).join(", "))}</div>
+      <div class="item-tags">Seen ${stats.timesSeen} time(s) · Correct ${stats.timesCorrect} time(s)</div>
+    `;
+
+        const side = document.createElement("div");
+        side.className = "item-row-side stat-side";
+        side.innerHTML = `
+      <div class="stat-score">${escapeHtml(formatAccuracy(stats.timesCorrect, stats.timesSeen))}</div>
+      <div class="item-subtitle">${escapeHtml(stats.lastSeenAt ? `Last seen ${formatRelativeDateLabel(stats.lastSeenAt)}` : "")}</div>
+    `;
+
+        row.append(main, side);
+        elements.strugglingCardsList.appendChild(row);
+    });
+}
+
+function renderCardStats() {
+    const studiedEntries = getStudiedCardEntries()
+        .sort((left, right) => {
+            if (right.stats.timesSeen !== left.stats.timesSeen) {
+                return right.stats.timesSeen - left.stats.timesSeen;
+            }
+
+            const leftAccuracy =
+                left.stats.timesSeen > 0 ? left.stats.timesCorrect / left.stats.timesSeen : 0;
+            const rightAccuracy =
+                right.stats.timesSeen > 0 ? right.stats.timesCorrect / right.stats.timesSeen : 0;
+
+            if (leftAccuracy !== rightAccuracy) {
+                return leftAccuracy - rightAccuracy;
+            }
+
+            return left.card.german.localeCompare(right.card.german);
+        })
+        .slice(0, 25);
+
+    elements.cardStatsSummary.textContent =
+        studiedEntries.length > 0
+            ? `Showing ${studiedEntries.length} studied card${studiedEntries.length === 1 ? "" : "s"}`
+            : "No card stats yet";
+    elements.cardStatsList.innerHTML = "";
+
+    if (studiedEntries.length === 0) {
+        elements.cardStatsList.appendChild(
+            createEmptyStateRow("Per-card study stats will appear after you answer some cards."),
+        );
+        return;
+    }
+
+    studiedEntries.forEach(({ card, stats }) => {
+        const row = document.createElement("div");
+        row.className = "item-row stat-row";
+
+        const main = document.createElement("div");
+        main.className = "item-row-main";
+        main.innerHTML = `
+      <div class="item-title">${escapeHtml(card.german)}</div>
+      <div class="item-subtitle">${escapeHtml((card.englishAnswers || []).join(", "))}</div>
+      <div class="item-tags">Seen ${stats.timesSeen} · Correct ${stats.timesCorrect}</div>
+    `;
+
+        const side = document.createElement("div");
+        side.className = "item-row-side stat-side";
+        side.innerHTML = `
+      <div class="stat-score">${escapeHtml(formatAccuracy(stats.timesCorrect, stats.timesSeen))}</div>
+      <div class="item-subtitle">${escapeHtml(stats.lastSeenAt ? formatSessionTimestamp(stats.lastSeenAt) : "Never")}</div>
+    `;
+
+        row.append(main, side);
+        elements.cardStatsList.appendChild(row);
+    });
 }
 
 function renderStudyQuestion() {
@@ -794,12 +1036,16 @@ function renderStudyQuestion() {
 }
 
 function showStudyResults() {
+    finalizeStudySession();
     elements.studySessionBox.classList.add("hidden");
     elements.studyResultsBox.classList.remove("hidden");
 
     const total = studySession?.cards.length || 0;
     const score = studySession?.score || 0;
-    elements.studyResultText.textContent = `You scored ${formatStudyScore(score)} out of ${formatStudyScore(total)}.`;
+    const answeredCount = studySession?.answeredCount || 0;
+    const completionNote =
+        answeredCount < total ? ` You answered ${answeredCount} of ${total} card(s).` : "";
+    elements.studyResultText.textContent = `You scored ${formatStudyScore(score)} out of ${formatStudyScore(total)}.${completionNote}`;
 }
 
 function onStudyCollectionOptionsChange(event) {
@@ -813,6 +1059,7 @@ function onStudyCollectionOptionsChange(event) {
 
     if (collectionId === STUDY_ALL_COLLECTION_ID) {
         selectedStudyCollectionIds = new Set([STUDY_ALL_COLLECTION_ID]);
+        updateUiPrefs({ selectedStudyCollectionIds: [...selectedStudyCollectionIds] });
         renderStudySetup();
         return;
     }
@@ -829,7 +1076,169 @@ function onStudyCollectionOptionsChange(event) {
         selectedStudyCollectionIds = new Set([STUDY_ALL_COLLECTION_ID]);
     }
 
+    updateUiPrefs({ selectedStudyCollectionIds: [...selectedStudyCollectionIds] });
     renderStudySetup();
+}
+
+function finalizeStudySession() {
+    if (!studySession || studySession.historyRecorded) {
+        return;
+    }
+
+    const answeredCount = studySession.answeredCount || 0;
+    const totalCards = studySession.cards?.length || 0;
+
+    if (answeredCount === 0 || totalCards === 0) {
+        studySession.historyRecorded = true;
+        return;
+    }
+
+    const entry = {
+        id: crypto.randomUUID(),
+        finishedAt: new Date().toISOString(),
+        collectionLabel: studySession.collectionLabel || getStudyCollectionSummaryText(),
+        collectionIds: Array.isArray(studySession.collectionIds)
+            ? [...studySession.collectionIds]
+            : [STUDY_ALL_COLLECTION_ID],
+        mode: studySession.mode,
+        score: studySession.score || 0,
+        answeredCount,
+        totalCards,
+    };
+
+    state.studyHistory = [entry, ...(state.studyHistory || [])].slice(0, 200);
+    studySession.historyRecorded = true;
+    persist();
+    renderStudyInsights();
+}
+
+function recordCardStudyResult(cardId, result) {
+    if (!cardId) {
+        return;
+    }
+
+    if (!state.cardStats) {
+        state.cardStats = {};
+    }
+
+    const stats = state.cardStats[cardId] || {
+        timesSeen: 0,
+        timesCorrect: 0,
+        lastSeenAt: "",
+        lastCorrectAt: "",
+    };
+
+    const now = new Date().toISOString();
+    stats.timesSeen += 1;
+    stats.lastSeenAt = now;
+
+    if ((result?.pointsAwarded || 0) >= 1) {
+        stats.timesCorrect += 1;
+        stats.lastCorrectAt = now;
+    }
+
+    state.cardStats[cardId] = stats;
+}
+
+function getStudiedCardEntries() {
+    return state.flashcards
+        .map((card) => ({ card, stats: getCardStatsForCard(card.id) }))
+        .filter(({ stats }) => stats.timesSeen > 0);
+}
+
+function getStrugglingCardEntries() {
+    return getStudiedCardEntries()
+        .filter(({ stats }) => stats.timesSeen > 0 && stats.timesCorrect < stats.timesSeen)
+        .sort((left, right) => {
+            const leftAccuracy =
+                left.stats.timesSeen > 0 ? left.stats.timesCorrect / left.stats.timesSeen : 0;
+            const rightAccuracy =
+                right.stats.timesSeen > 0 ? right.stats.timesCorrect / right.stats.timesSeen : 0;
+
+            if (leftAccuracy !== rightAccuracy) {
+                return leftAccuracy - rightAccuracy;
+            }
+
+            if (right.stats.timesSeen !== left.stats.timesSeen) {
+                return right.stats.timesSeen - left.stats.timesSeen;
+            }
+
+            return left.card.german.localeCompare(right.card.german);
+        });
+}
+
+function getCardStatsForCard(cardId) {
+    return (
+        state.cardStats?.[cardId] || {
+            timesSeen: 0,
+            timesCorrect: 0,
+            lastSeenAt: "",
+            lastCorrectAt: "",
+        }
+    );
+}
+
+function createEmptyStateRow(message) {
+    const row = document.createElement("div");
+    row.className = "empty-state";
+    row.textContent = message;
+    return row;
+}
+
+function formatAccuracy(timesCorrect, timesSeen) {
+    if (!timesSeen) {
+        return "0% accuracy";
+    }
+
+    return `${Math.round((timesCorrect / timesSeen) * 100)}% accuracy`;
+}
+
+function formatSessionTimestamp(value) {
+    const timestamp = Date.parse(value || "");
+
+    if (Number.isNaN(timestamp)) {
+        return "Unknown date";
+    }
+
+    return new Intl.DateTimeFormat(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+    }).format(new Date(timestamp));
+}
+
+function formatRelativeDateLabel(value) {
+    const timestamp = Date.parse(value || "");
+
+    if (Number.isNaN(timestamp)) {
+        return "unknown";
+    }
+
+    const diffDays = Math.max(0, Math.round((Date.now() - timestamp) / 86400000));
+
+    if (diffDays === 0) {
+        return "today";
+    }
+
+    if (diffDays === 1) {
+        return "yesterday";
+    }
+
+    return `${diffDays} days ago`;
+}
+
+function formatSessionCompletionLabel(entry) {
+    return entry.answeredCount < entry.totalCards ? "Ended early" : "Completed";
+}
+
+function formatStudyModeLabel(mode) {
+    const labels = {
+        "de-en": "German → English",
+        "en-de": "English → German",
+        "image-de": "Image → German",
+        random: "Random mix",
+    };
+
+    return labels[mode] || mode;
 }
 
 function createStudyCollectionOption({ id, label, count, checked, note = "" }) {
@@ -979,6 +1388,12 @@ function deleteFlashcards(cardIds) {
         cardIds: collection.cardIds.filter((id) => !idsToDelete.has(id)),
     }));
 
+    Object.keys(state.cardStats || {}).forEach((cardId) => {
+        if (idsToDelete.has(cardId)) {
+            delete state.cardStats[cardId];
+        }
+    });
+
     idsToDelete.forEach((id) => selectedFlashcardIds.delete(id));
 
     if (editingFlashcardId && idsToDelete.has(editingFlashcardId)) {
@@ -993,13 +1408,19 @@ function deleteCollection(collectionId) {
     state.collections = state.collections.filter((collection) => collection.id !== collectionId);
 
     if (selectedCollectionId === collectionId) {
-        selectedCollectionId = state.collections[0]?.id || null;
+        selectedCollectionId = getValidSelectedCollectionId(state.collections[0]?.id || null);
     }
 
     if (collectionEditorFilterCollectionId === collectionId) {
         collectionEditorFilterCollectionId = "";
         elements.collectionFilterCollection.value = "";
     }
+
+    sanitizeStudyCollectionSelection();
+    updateUiPrefs({
+        selectedCollectionId: selectedCollectionId || "",
+        selectedStudyCollectionIds: [...selectedStudyCollectionIds],
+    });
 
     persist();
     setCollectionColorInputDefault();
@@ -1056,7 +1477,8 @@ function populateCollectionFilterOptions() {
     });
 
     const hasCurrentValue =
-        currentValue === "" || state.collections.some((collection) => collection.id === currentValue);
+        currentValue === "" ||
+        state.collections.some((collection) => collection.id === currentValue);
 
     collectionEditorFilterCollectionId = hasCurrentValue ? currentValue : "";
     elements.collectionFilterCollection.value = collectionEditorFilterCollectionId;
@@ -1220,7 +1642,7 @@ function createFlashcardEditPanel(card) {
         const conflictingCard = findExistingFlashcardByGerman(german);
         if (conflictingCard && conflictingCard.id !== card.id) {
             window.alert(
-                `A different flashcard already uses the German word "${conflictingCard.german}". Edit that card instead or delete it first.`
+                `A different flashcard already uses the German word "${conflictingCard.german}". Edit that card instead or delete it first.`,
             );
             return;
         }
@@ -1275,8 +1697,76 @@ function ensureCardInCollection(collectionId, cardId) {
     }
 }
 
+function applyUiPrefsToControls() {
+    if (elements.studyMode) {
+        elements.studyMode.value = uiPrefs.studyMode || "de-en";
+    }
+
+    if (elements.studyCardLimit) {
+        elements.studyCardLimit.value = uiPrefs.studyCardLimit || "";
+    }
+}
+
+function updateUiPrefs(partialPrefs) {
+    uiPrefs = {
+        ...uiPrefs,
+        ...partialPrefs,
+    };
+    saveUiPrefs(uiPrefs);
+}
+
+function getValidSelectedCollectionId(candidateId) {
+    if (candidateId && state.collections.some((collection) => collection.id === candidateId)) {
+        return candidateId;
+    }
+
+    return state.collections[0]?.id || null;
+}
+
+function cloneStateForPersistence(nextState) {
+    return JSON.parse(JSON.stringify(nextState));
+}
+
+function showAppStatusMessage(message, isSuccess) {
+    if (!elements.appStatusMessage) {
+        return;
+    }
+
+    elements.appStatusMessage.textContent = message;
+    elements.appStatusMessage.className = `status-message app-status-message ${isSuccess ? "success" : "error"}`;
+    elements.appStatusMessage.classList.toggle("hidden", !message);
+}
+
+function clearAppStatusMessage() {
+    if (!elements.appStatusMessage) {
+        return;
+    }
+
+    elements.appStatusMessage.textContent = "";
+    elements.appStatusMessage.className = "status-message app-status-message hidden";
+}
+
 function persist() {
-    saveState(state);
+    const snapshot = cloneStateForPersistence(state);
+
+    persistQueue = persistQueue
+        .catch(() => false)
+        .then(async () => {
+            try {
+                await saveState(snapshot);
+                clearAppStatusMessage();
+                return true;
+            } catch (error) {
+                console.error("Failed to save app data.", error);
+                showAppStatusMessage(
+                    "Could not save your latest changes to IndexedDB. Keep this tab open and export a backup once storage is working again.",
+                    false,
+                );
+                return false;
+            }
+        });
+
+    return persistQueue;
 }
 
 function showStudySetupMessage(message) {
@@ -1399,7 +1889,9 @@ function matchesCardSearch(card, searchTerm) {
 
     return (
         normalizeWord(card.german).includes(normalizedSearch) ||
-        (card.englishAnswers || []).some((answer) => normalizeWord(answer).includes(normalizedSearch))
+        (card.englishAnswers || []).some((answer) =>
+            normalizeWord(answer).includes(normalizedSearch),
+        )
     );
 }
 

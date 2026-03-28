@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>German-English Flashcards</title>
+  <title>Flashcards</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 
@@ -22,11 +22,12 @@
       </nav>
 
       <div class="storage-note">
-        Data is saved in your browser's localStorage.
+        Flashcards, collections, stats, and images are saved in your browser's IndexedDB.
       </div>
     </aside>
 
     <main class="main-content">
+      <div id="app-status-message" class="status-message app-status-message hidden"></div>
       <section class="tab-panel active" id="tab-flashcards">
         <div class="panel-header">
           <h2>Flashcards</h2>
@@ -235,6 +236,32 @@
           <p id="study-result-text"></p>
           <button id="study-reset-button" type="button">Start another session</button>
         </div>
+
+        <div class="grid-two study-insights-grid">
+          <div class="card">
+            <div class="section-row">
+              <h3>Past Sessions</h3>
+              <span id="study-history-summary" class="muted"></span>
+            </div>
+            <div id="study-history-list" class="item-list"></div>
+          </div>
+
+          <div class="card">
+            <div class="section-row">
+              <h3>Struggling Cards</h3>
+              <span id="struggling-cards-summary" class="muted"></span>
+            </div>
+            <div id="struggling-cards-list" class="item-list"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="section-row">
+            <h3>Card Stats</h3>
+            <span id="card-stats-summary" class="muted"></span>
+          </div>
+          <div id="card-stats-list" class="item-list"></div>
+        </div>
       </section>
 
       <section class="tab-panel" id="tab-import-export">
@@ -255,7 +282,7 @@
 
           <div class="card">
             <h3>Full Backup Import</h3>
-            <p>Import a previously exported full TXT backup with cards and collections.</p>
+            <p>Import a previously exported full TXT backup with cards, collections, and study stats.</p>
             <input type="file" id="backup-import-file" accept=".txt" />
             <button id="backup-import-button" type="button">Import full backup</button>
           </div>
@@ -263,7 +290,7 @@
 
         <div class="card">
           <h3>Export</h3>
-          <p>Export all flashcards and collections as a TXT file.</p>
+          <p>Export all flashcards, collections, and study stats as a TXT file.</p>
           <button id="export-button" type="button">Export full backup</button>
         </div>
 
