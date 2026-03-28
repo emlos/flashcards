@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>German-English Flashcards</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <h1>Flashcards</h1>
+      <p class="sidebar-subtitle">Pure client-side German-English study app</p>
+
+      <nav class="tab-nav">
+        <button class="tab-button active" data-tab="flashcards">Flashcards</button>
+        <button class="tab-button" data-tab="collections">Collections</button>
+        <button class="tab-button" data-tab="study">Study</button>
+        <button class="tab-button" data-tab="import-export">Import / Export</button>
+      </nav>
+
+      <div class="storage-note">
+        Data is saved in your browser's localStorage.
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <section class="tab-panel active" id="tab-flashcards">
+        <div class="panel-header">
+          <h2>Flashcards</h2>
+          <p>Create cards with German, English, and an optional image.</p>
+        </div>
+
+        <div class="card form-card">
+          <h3>Add Flashcard</h3>
+          <form id="flashcard-form" class="stack-form">
+            <label>
+              German
+              <input type="text" id="flashcard-german" required />
+            </label>
+            <label>
+              English
+              <input type="text" id="flashcard-english" required />
+            </label>
+            <label>
+              Optional image
+              <input type="file" id="flashcard-image" accept="image/*" />
+            </label>
+            <button type="submit">Add flashcard</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="section-row">
+            <h3>All Flashcards</h3>
+            <span id="flashcard-count" class="muted"></span>
+          </div>
+          <div id="flashcards-empty" class="empty-state">No flashcards yet.</div>
+          <div id="flashcards-list" class="item-list"></div>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="tab-collections">
+        <div class="panel-header">
+          <h2>Collections</h2>
+          <p>Create named collections and decide which cards belong in them.</p>
+        </div>
+
+        <div class="card form-card">
+          <h3>Create Collection</h3>
+          <form id="collection-form" class="inline-form">
+            <input type="text" id="collection-name" placeholder="Collection name" required />
+            <button type="submit">Create</button>
+          </form>
+        </div>
+
+        <div class="grid-two">
+          <div class="card">
+            <div class="section-row">
+              <h3>Collections</h3>
+              <span id="collection-count" class="muted"></span>
+            </div>
+            <div id="collections-empty" class="empty-state">No collections yet.</div>
+            <div id="collections-list" class="item-list"></div>
+          </div>
+
+          <div class="card">
+            <div class="section-row">
+              <h3>Collection Editor</h3>
+              <span id="selected-collection-name" class="muted">Select a collection</span>
+            </div>
+            <div id="collection-editor-empty" class="empty-state">Select a collection to edit it.</div>
+            <div id="collection-editor" class="hidden">
+              <p class="muted">Choose which flashcards belong to this collection.</p>
+              <div id="collection-cards-editor" class="checkbox-list"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="tab-study">
+        <div class="panel-header">
+          <h2>Study</h2>
+          <p>Pick a collection and mode, then work through the cards.</p>
+        </div>
+
+        <div class="card form-card">
+          <h3>Start Session</h3>
+          <form id="study-setup-form" class="stack-form">
+            <label>
+              Collection
+              <select id="study-collection" required></select>
+            </label>
+            <label>
+              Mode
+              <select id="study-mode" required>
+                <option value="de-en">German → English</option>
+                <option value="en-de">English → German</option>
+                <option value="image-de">Image → German</option>
+              </select>
+            </label>
+            <button type="submit">Start study session</button>
+          </form>
+          <p id="study-setup-message" class="muted"></p>
+        </div>
+
+        <div id="study-session" class="card hidden">
+          <div class="section-row">
+            <h3>Current Question</h3>
+            <span id="study-progress" class="muted"></span>
+          </div>
+
+          <div id="study-image-wrapper" class="study-image-wrapper hidden">
+            <img id="study-image" alt="Flashcard prompt image" />
+          </div>
+
+          <div id="study-prompt" class="study-prompt"></div>
+
+          <form id="study-answer-form" class="inline-form">
+            <input type="text" id="study-answer" autocomplete="off" required />
+            <button type="submit">Check</button>
+          </form>
+
+          <div id="study-feedback" class="study-feedback"></div>
+
+          <div class="study-actions">
+            <button id="study-next-button" class="secondary hidden" type="button">Next</button>
+            <button id="study-end-button" class="secondary" type="button">End session</button>
+          </div>
+        </div>
+
+        <div id="study-results" class="card hidden">
+          <h3>Session Result</h3>
+          <p id="study-result-text"></p>
+          <button id="study-reset-button" type="button">Start another session</button>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="tab-import-export">
+        <div class="panel-header">
+          <h2>Import / Export</h2>
+          <p>Bulk-import words from a TXT file, or export everything as a TXT backup.</p>
+        </div>
+
+        <div class="grid-two">
+          <div class="card">
+            <h3>Bulk Import Words</h3>
+            <p>TXT format: one card per line in the form <code>German | English</code></p>
+            <input type="file" id="bulk-import-file" accept=".txt" />
+            <button id="bulk-import-button" type="button">Import words</button>
+          </div>
+
+          <div class="card">
+            <h3>Full Backup Import</h3>
+            <p>Import a previously exported full TXT backup with cards and collections.</p>
+            <input type="file" id="backup-import-file" accept=".txt" />
+            <button id="backup-import-button" type="button">Import full backup</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Export</h3>
+          <p>Export all flashcards and collections as a TXT file.</p>
+          <button id="export-button" type="button">Export full backup</button>
+        </div>
+
+        <div class="card">
+          <h3>Format Reference</h3>
+          <div class="format-box">
+            <strong>Bulk word import:</strong>
+            <pre>Haus | house
+Baum | tree
+Apfel | apple</pre>
+
+            <strong>Full backup export/import:</strong>
+            <pre>CARD	card-id	encodedGerman	encodedEnglish	encodedImageData
+COLLECTION	collection-id	encodedName	cardId1,cardId2,cardId3</pre>
+          </div>
+        </div>
+
+        <div id="import-export-message" class="status-message"></div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

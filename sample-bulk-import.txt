@@ -1,0 +1,6 @@
+# One flashcard per line
+Haus | house
+Baum | tree
+Apfel | apple
+Buch | book
+Wasser | water
