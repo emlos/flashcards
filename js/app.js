@@ -6,6 +6,7 @@ import {
     resetStoredAppData,
     saveFlashcardImage,
     createExportState,
+    releaseStateImageObjectUrls,
     loadUiPrefs,
     saveUiPrefs,
 } from "./storage.js";
@@ -149,11 +150,11 @@ void initApp();
 
 async function initApp() {
     try {
-        state = await loadState();
+        replaceAppState(await loadState());
         clearAppStatusMessage();
     } catch (error) {
         console.error("Failed to load app data.", error);
-        state = createEmptyState();
+        replaceAppState(createEmptyState());
         showAppStatusMessage(
             "Could not load your saved data from IndexedDB. The app is running with an empty in-memory state until storage works again.",
             false,
@@ -175,6 +176,20 @@ async function initApp() {
     applyUiPrefsToControls();
     renderAll();
     switchTab(uiPrefs.activeTab || "flashcards");
+}
+
+function replaceAppState(nextState) {
+    if (state && state !== nextState) {
+        releaseStateImageObjectUrls(state);
+    }
+
+    state = nextState;
+}
+
+function onAppPageHide(event) {
+    if (!event.persisted) {
+        releaseStateImageObjectUrls(state);
+    }
 }
 
 function bindEvents() {
@@ -217,6 +232,7 @@ function bindEvents() {
     elements.backupImportButton.addEventListener("click", onBackupImport);
     elements.exportButton.addEventListener("click", onExport);
     elements.deleteAllButton.addEventListener("click", onDeleteAll);
+    window.addEventListener("pagehide", onAppPageHide);
 }
 
 function switchTab(tabName) {
@@ -721,7 +737,7 @@ async function onBackupImport() {
         }
 
         if (importMode === "replace") {
-            state = await replaceState(importedState);
+            replaceAppState(await replaceState(importedState));
             finalizeImportState({ resetStudySelection: true, resetSelectedCollection: true });
         } else {
             const mergeResult = await mergeBackupStateIntoCurrentState(importedState);
@@ -787,7 +803,7 @@ async function onDeleteAll() {
 
     try {
         await persistQueue.catch(() => false);
-        state = await resetStoredAppData();
+        replaceAppState(await resetStoredAppData());
         persistQueue = Promise.resolve(true);
         uiPrefs = loadUiPrefs();
         selectedCollectionId = null;

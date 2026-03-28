@@ -209,6 +209,19 @@ export async function createExportState(state) {
     };
 }
 
+export function releaseStateImageObjectUrls(state) {
+    if (!Array.isArray(state?.flashcards)) {
+        return;
+    }
+
+    state.flashcards.forEach((card) => {
+        if (isBlobUrl(card?.imageData)) {
+            URL.revokeObjectURL(card.imageData);
+            card.imageData = "";
+        }
+    });
+}
+
 export function loadUiPrefs() {
     try {
         const raw = localStorage.getItem(UI_PREFS_KEY);
@@ -473,6 +486,10 @@ function readImageDataUrlsByCardId(database, cardIds) {
             });
         });
     });
+}
+
+function isBlobUrl(value) {
+    return String(value || "").startsWith("blob:");
 }
 
 function collectInlineImagesByCardId(rawState, safeState) {
