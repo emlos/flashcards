@@ -10,6 +10,7 @@
   --muted: #6b7280;
   --border: #d1d5db;
   --accent: #111827;
+  --accent-soft: #e5e7eb;
   --success-bg: #ecfdf5;
   --success-text: #166534;
   --error-bg: #fef2f2;
@@ -43,6 +44,11 @@ button.secondary {
   color: var(--accent);
 }
 
+button.danger {
+  background: #b91c1c;
+  border-color: #b91c1c;
+}
+
 button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
@@ -55,6 +61,17 @@ select {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: white;
+}
+
+input[type="checkbox"] {
+  width: auto;
+}
+
+input[type="color"] {
+  width: 3rem;
+  min-width: 3rem;
+  padding: 0.2rem;
+  height: 2.5rem;
 }
 
 code,
@@ -161,6 +178,16 @@ pre {
   flex: 1;
 }
 
+.collection-form {
+  align-items: end;
+}
+
+.compact-label {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 5rem;
+}
+
 .stack-form {
   display: grid;
   gap: 0.9rem;
@@ -180,6 +207,27 @@ pre {
   margin-bottom: 0.75rem;
 }
 
+.toolbar {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.toolbar-wrap {
+  flex-wrap: wrap;
+}
+
+.filter-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 1fr 1fr;
+}
+
+.editor-controls {
+  margin-bottom: 0.75rem;
+}
+
 .item-list {
   display: grid;
   gap: 0.75rem;
@@ -194,6 +242,16 @@ pre {
   justify-content: space-between;
   gap: 1rem;
   align-items: flex-start;
+}
+
+.selectable-row {
+  align-items: stretch;
+}
+
+.selection-cell {
+  display: flex;
+  align-items: flex-start;
+  padding-top: 0.25rem;
 }
 
 .item-row-main {
@@ -213,6 +271,56 @@ pre {
 .item-tags {
   margin-top: 0.35rem;
   font-size: 0.92rem;
+}
+
+.collection-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.collection-color-dot {
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 999px;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+
+.collection-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+
+.collection-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.85rem;
+}
+
+.collection-pill.empty {
+  color: var(--muted);
+  background: transparent;
+}
+
+.collection-pill-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: var(--collection-color, var(--accent));
+  display: inline-block;
+}
+
+.color-input {
+  background: transparent;
+  border: 0;
 }
 
 .empty-state {
@@ -241,6 +349,10 @@ pre {
 .checkbox-item input {
   width: auto;
   margin-top: 0.2rem;
+}
+
+.checkbox-item-content {
+  flex: 1;
 }
 
 .tab-panel {
@@ -336,11 +448,13 @@ pre {
     padding-bottom: 1rem;
   }
 
-  .grid-two {
+  .grid-two,
+  .filter-grid {
     grid-template-columns: 1fr;
   }
 
-  .inline-form {
+  .inline-form,
+  .toolbar {
     flex-direction: column;
     align-items: stretch;
   }

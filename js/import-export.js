@@ -112,6 +112,7 @@ export function exportBackupText(state) {
                 collection.id,
                 encodeField(collection.name),
                 Array.isArray(collection.cardIds) ? collection.cardIds.join(",") : "",
+                encodeField(collection.color || "#64748b"),
             ].join("\t"),
         );
     }
@@ -152,6 +153,7 @@ export function parseBackupText(text) {
                 id: parts[1],
                 name: decodeField(parts[2]),
                 cardIds: parts[3] ? parts[3].split(",").filter(Boolean) : [],
+                color: parts[4] ? decodeField(parts[4]) : "#64748b",
             });
         } else {
             throw new Error(`Unknown line type: "${line}"`);

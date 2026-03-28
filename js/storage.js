@@ -1,4 +1,5 @@
 const STORAGE_KEY = "de_en_flashcards_app_v1";
+const DEFAULT_COLLECTION_COLOR = "#64748b";
 
 function defaultState() {
     return {
@@ -30,6 +31,12 @@ function sanitizeFlashcard(card) {
     };
 }
 
+function sanitizeColor(value) {
+    return /^#[0-9a-fA-F]{6}$/.test(String(value || ""))
+        ? String(value)
+        : DEFAULT_COLLECTION_COLOR;
+}
+
 function sanitizeCollection(collection) {
     return {
         id: String(collection?.id || crypto.randomUUID()),
@@ -37,6 +44,7 @@ function sanitizeCollection(collection) {
         cardIds: Array.isArray(collection?.cardIds)
             ? collection.cardIds.map((id) => String(id))
             : [],
+        color: sanitizeColor(collection?.color),
     };
 }
 

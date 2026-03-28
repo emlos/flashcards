@@ -9,9 +9,27 @@ import {
     isSessionFinished,
 } from "./study.js";
 
+const DEFAULT_COLLECTION_COLORS = [
+    "#4f46e5",
+    "#0891b2",
+    "#16a34a",
+    "#e11d48",
+    "#f59e0b",
+    "#7c3aed",
+    "#0f766e",
+    "#ea580c",
+    "#2563eb",
+    "#65a30d",
+];
+
 let state = loadState();
 let selectedCollectionId = null;
 let studySession = null;
+let flashcardSearchTerm = "";
+let collectionEditorSearchTerm = "";
+let collectionEditorMembershipFilter = "all";
+let collectionEditorFilterCollectionId = "";
+const selectedFlashcardIds = new Set();
 
 const elements = {
     tabButtons: Array.from(document.querySelectorAll(".tab-button")),
@@ -21,18 +39,28 @@ const elements = {
     flashcardGerman: document.getElementById("flashcard-german"),
     flashcardEnglish: document.getElementById("flashcard-english"),
     flashcardImage: document.getElementById("flashcard-image"),
+    flashcardSearch: document.getElementById("flashcard-search"),
+    flashcardSelectVisible: document.getElementById("flashcard-select-visible"),
+    flashcardClearSelection: document.getElementById("flashcard-clear-selection"),
+    flashcardDeleteSelected: document.getElementById("flashcard-delete-selected"),
+    flashcardSelectionSummary: document.getElementById("flashcard-selection-summary"),
     flashcardsList: document.getElementById("flashcards-list"),
     flashcardsEmpty: document.getElementById("flashcards-empty"),
     flashcardCount: document.getElementById("flashcard-count"),
 
     collectionForm: document.getElementById("collection-form"),
     collectionName: document.getElementById("collection-name"),
+    collectionColor: document.getElementById("collection-color"),
     collectionsList: document.getElementById("collections-list"),
     collectionsEmpty: document.getElementById("collections-empty"),
     collectionCount: document.getElementById("collection-count"),
     selectedCollectionName: document.getElementById("selected-collection-name"),
     collectionEditor: document.getElementById("collection-editor"),
     collectionEditorEmpty: document.getElementById("collection-editor-empty"),
+    collectionSearch: document.getElementById("collection-search"),
+    collectionMembershipFilter: document.getElementById("collection-membership-filter"),
+    collectionFilterCollection: document.getElementById("collection-filter-collection"),
+    collectionEditorSummary: document.getElementById("collection-editor-summary"),
     collectionCardsEditor: document.getElementById("collection-cards-editor"),
 
     studySetupForm: document.getElementById("study-setup-form"),
@@ -62,6 +90,7 @@ const elements = {
 };
 
 bindEvents();
+setCollectionColorInputDefault();
 renderAll();
 
 function bindEvents() {
@@ -70,12 +99,22 @@ function bindEvents() {
     });
 
     elements.flashcardForm.addEventListener("submit", onFlashcardSubmit);
+    elements.flashcardSearch.addEventListener("input", onFlashcardSearchInput);
+    elements.flashcardSelectVisible.addEventListener("click", onSelectVisibleFlashcards);
+    elements.flashcardClearSelection.addEventListener("click", onClearFlashcardSelection);
+    elements.flashcardDeleteSelected.addEventListener("click", onDeleteSelectedFlashcards);
+
     elements.collectionForm.addEventListener("submit", onCollectionSubmit);
+    elements.collectionSearch.addEventListener("input", onCollectionSearchInput);
+    elements.collectionMembershipFilter.addEventListener("change", onCollectionFilterChange);
+    elements.collectionFilterCollection.addEventListener("change", onCollectionFilterChange);
+
     elements.studySetupForm.addEventListener("submit", onStudySetupSubmit);
     elements.studyAnswerForm.addEventListener("submit", onStudyAnswerSubmit);
     elements.studyNextButton.addEventListener("click", onStudyNext);
     elements.studyEndButton.addEventListener("click", endStudySession);
     elements.studyResetButton.addEventListener("click", resetStudyView);
+
     elements.bulkImportButton.addEventListener("click", onBulkImport);
     elements.backupImportButton.addEventListener("click", onBackupImport);
     elements.exportButton.addEventListener("click", onExport);
@@ -133,6 +172,43 @@ async function onFlashcardSubmit(event) {
     renderAll();
 }
 
+function onFlashcardSearchInput(event) {
+    flashcardSearchTerm = event.target.value;
+    renderFlashcards();
+}
+
+function onSelectVisibleFlashcards() {
+    getFilteredFlashcards().forEach((card) => {
+        selectedFlashcardIds.add(card.id);
+    });
+    renderFlashcards();
+}
+
+function onClearFlashcardSelection() {
+    selectedFlashcardIds.clear();
+    renderFlashcards();
+}
+
+function onDeleteSelectedFlashcards() {
+    const idsToDelete = state.flashcards
+        .filter((card) => selectedFlashcardIds.has(card.id))
+        .map((card) => card.id);
+
+    if (idsToDelete.length === 0) {
+        return;
+    }
+
+    const confirmed = window.confirm(
+        `Delete ${idsToDelete.length} selected flashcard(s)? This also removes them from all collections.`,
+    );
+
+    if (!confirmed) {
+        return;
+    }
+
+    deleteFlashcards(idsToDelete);
+}
+
 function onCollectionSubmit(event) {
     event.preventDefault();
 
@@ -141,17 +217,24 @@ function onCollectionSubmit(event) {
         return;
     }
 
-    const collection = {
-        id: crypto.randomUUID(),
-        name,
-        cardIds: [],
-    };
-
-    state.collections.push(collection);
+    const { collection } = getOrCreateCollectionByName(name, elements.collectionColor.value);
     selectedCollectionId = collection.id;
+
     persist();
     elements.collectionForm.reset();
+    setCollectionColorInputDefault();
     renderAll();
+}
+
+function onCollectionSearchInput(event) {
+    collectionEditorSearchTerm = event.target.value;
+    renderCollectionEditor();
+}
+
+function onCollectionFilterChange() {
+    collectionEditorMembershipFilter = elements.collectionMembershipFilter.value;
+    collectionEditorFilterCollectionId = elements.collectionFilterCollection.value;
+    renderCollectionEditor();
 }
 
 function onStudySetupSubmit(event) {
@@ -359,7 +442,9 @@ async function onBackupImport() {
         const text = await file.text();
         state = replaceState(parseBackupText(text));
         selectedCollectionId = state.collections[0]?.id || null;
+        selectedFlashcardIds.clear();
         resetStudyView();
+        setCollectionColorInputDefault();
         renderAll();
         showImportExportMessage("Full backup imported successfully.", true);
         elements.backupImportFile.value = "";
@@ -375,6 +460,7 @@ function onExport() {
 }
 
 function renderAll() {
+    pruneSelectedFlashcardIds();
     renderFlashcards();
     renderCollections();
     renderCollectionEditor();
@@ -382,13 +468,41 @@ function renderAll() {
 }
 
 function renderFlashcards() {
-    elements.flashcardCount.textContent = `${state.flashcards.length} total`;
-    elements.flashcardsEmpty.classList.toggle("hidden", state.flashcards.length > 0);
+    const filteredCards = getFilteredFlashcards();
+    const selectedCount = state.flashcards.filter((card) => selectedFlashcardIds.has(card.id)).length;
+
+    elements.flashcardCount.textContent = `${filteredCards.length} shown / ${state.flashcards.length} total`;
+    elements.flashcardSelectionSummary.textContent = `${selectedCount} selected`;
+    elements.flashcardsEmpty.classList.toggle("hidden", filteredCards.length > 0);
+    elements.flashcardsEmpty.textContent =
+        state.flashcards.length === 0
+            ? "No flashcards yet."
+            : "No flashcards match your search.";
     elements.flashcardsList.innerHTML = "";
 
-    state.flashcards.forEach((card) => {
+    elements.flashcardSelectVisible.disabled = filteredCards.length === 0;
+    elements.flashcardClearSelection.disabled = selectedCount === 0;
+    elements.flashcardDeleteSelected.disabled = selectedCount === 0;
+
+    filteredCards.forEach((card) => {
         const row = document.createElement("div");
-        row.className = "item-row";
+        row.className = "item-row selectable-row";
+
+        const left = document.createElement("div");
+        left.className = "selection-cell";
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = selectedFlashcardIds.has(card.id);
+        checkbox.addEventListener("change", () => {
+            if (checkbox.checked) {
+                selectedFlashcardIds.add(card.id);
+            } else {
+                selectedFlashcardIds.delete(card.id);
+            }
+            renderFlashcards();
+        });
+        left.appendChild(checkbox);
 
         const main = document.createElement("div");
         main.className = "item-row-main";
@@ -397,6 +511,7 @@ function renderFlashcards() {
       <div class="item-subtitle">ID: ${escapeHtml(card.id)}</div>
       <div class="item-tags">${card.imageData ? "Has image card" : "No image"}</div>
     `;
+        main.appendChild(createCollectionPillsContainer(card.id));
 
         const side = document.createElement("div");
         side.className = "item-row-side";
@@ -413,10 +528,10 @@ function renderFlashcards() {
         deleteButton.type = "button";
         deleteButton.className = "secondary";
         deleteButton.textContent = "Delete";
-        deleteButton.addEventListener("click", () => deleteFlashcard(card.id));
+        deleteButton.addEventListener("click", () => deleteFlashcards([card.id]));
         side.appendChild(deleteButton);
 
-        row.append(main, side);
+        row.append(left, main, side);
         elements.flashcardsList.appendChild(row);
     });
 }
@@ -436,13 +551,37 @@ function renderCollections() {
 
         const main = document.createElement("div");
         main.className = "item-row-main";
-        main.innerHTML = `
-      <div class="item-title">${escapeHtml(collection.name)}</div>
-      <div class="item-subtitle">${collection.cardIds.length} card(s)</div>
-    `;
+
+        const titleRow = document.createElement("div");
+        titleRow.className = "collection-title-row";
+
+        const pip = document.createElement("span");
+        pip.className = "collection-color-dot";
+        pip.style.backgroundColor = getCollectionColor(collection);
+        titleRow.appendChild(pip);
+
+        const title = document.createElement("div");
+        title.className = "item-title";
+        title.textContent = collection.name;
+        titleRow.appendChild(title);
+        main.appendChild(titleRow);
+
+        const subtitle = document.createElement("div");
+        subtitle.className = "item-subtitle";
+        subtitle.textContent = `${collection.cardIds.length} card(s)`;
+        main.appendChild(subtitle);
 
         const side = document.createElement("div");
         side.className = "item-row-side";
+
+        const colorInput = document.createElement("input");
+        colorInput.type = "color";
+        colorInput.value = getCollectionColor(collection);
+        colorInput.className = "color-input";
+        colorInput.title = `Color for ${collection.name}`;
+        colorInput.addEventListener("input", () => {
+            updateCollectionColor(collection.id, colorInput.value);
+        });
 
         const selectButton = document.createElement("button");
         selectButton.type = "button";
@@ -450,8 +589,8 @@ function renderCollections() {
         selectButton.textContent = collection.id === selectedCollectionId ? "Selected" : "Edit";
         selectButton.addEventListener("click", () => {
             selectedCollectionId = collection.id;
-            renderCollectionEditor();
             renderCollections();
+            renderCollectionEditor();
         });
 
         const deleteButton = document.createElement("button");
@@ -460,7 +599,7 @@ function renderCollections() {
         deleteButton.textContent = "Delete";
         deleteButton.addEventListener("click", () => deleteCollection(collection.id));
 
-        side.append(selectButton, deleteButton);
+        side.append(colorInput, selectButton, deleteButton);
         row.append(main, side);
         elements.collectionsList.appendChild(row);
     });
@@ -469,10 +608,14 @@ function renderCollections() {
 function renderCollectionEditor() {
     const collection = state.collections.find((item) => item.id === selectedCollectionId);
 
+    populateCollectionFilterOptions();
+
     if (!collection) {
         elements.collectionEditor.classList.add("hidden");
         elements.collectionEditorEmpty.classList.remove("hidden");
         elements.selectedCollectionName.textContent = "Select a collection";
+        elements.collectionCardsEditor.innerHTML = "";
+        elements.collectionEditorSummary.textContent = "";
         return;
     }
 
@@ -481,7 +624,20 @@ function renderCollectionEditor() {
     elements.selectedCollectionName.textContent = collection.name;
     elements.collectionCardsEditor.innerHTML = "";
 
-    state.flashcards.forEach((card) => {
+    const filteredCards = getFilteredCollectionEditorCards(collection);
+    elements.collectionEditorSummary.textContent = `${filteredCards.length} shown / ${state.flashcards.length} total`;
+
+    if (state.flashcards.length === 0) {
+        elements.collectionCardsEditor.innerHTML = `<div class="empty-state">Create flashcards first.</div>`;
+        return;
+    }
+
+    if (filteredCards.length === 0) {
+        elements.collectionCardsEditor.innerHTML = `<div class="empty-state">No flashcards match the current filters.</div>`;
+        return;
+    }
+
+    filteredCards.forEach((card) => {
         const wrapper = document.createElement("label");
         wrapper.className = "checkbox-item";
 
@@ -493,18 +649,16 @@ function renderCollectionEditor() {
         );
 
         const text = document.createElement("div");
+        text.className = "checkbox-item-content";
         text.innerHTML = `
       <div class="item-title">${escapeHtml(card.german)} — ${escapeHtml(card.englishAnswers.join(", "))}</div>
       <div class="item-subtitle">${card.imageData ? "Has image" : "No image"}</div>
     `;
+        text.appendChild(createCollectionPillsContainer(card.id));
 
         wrapper.append(checkbox, text);
         elements.collectionCardsEditor.appendChild(wrapper);
     });
-
-    if (state.flashcards.length === 0) {
-        elements.collectionCardsEditor.innerHTML = `<div class="empty-state">Create flashcards first.</div>`;
-    }
 }
 
 function renderStudySetup() {
@@ -549,6 +703,7 @@ function renderStudyQuestion() {
         elements.studyImageWrapper.classList.add("hidden");
     }
 }
+
 function showStudyResults() {
     elements.studySessionBox.classList.add("hidden");
     elements.studyResultsBox.classList.remove("hidden");
@@ -558,13 +713,16 @@ function showStudyResults() {
     elements.studyResultText.textContent = `You scored ${score} out of ${total}.`;
 }
 
-function deleteFlashcard(cardId) {
-    state.flashcards = state.flashcards.filter((card) => card.id !== cardId);
+function deleteFlashcards(cardIds) {
+    const idsToDelete = new Set(cardIds);
+    state.flashcards = state.flashcards.filter((card) => !idsToDelete.has(card.id));
 
     state.collections = state.collections.map((collection) => ({
         ...collection,
-        cardIds: collection.cardIds.filter((id) => id !== cardId),
+        cardIds: collection.cardIds.filter((id) => !idsToDelete.has(id)),
     }));
+
+    idsToDelete.forEach((id) => selectedFlashcardIds.delete(id));
 
     persist();
     renderAll();
@@ -577,7 +735,13 @@ function deleteCollection(collectionId) {
         selectedCollectionId = state.collections[0]?.id || null;
     }
 
+    if (collectionEditorFilterCollectionId === collectionId) {
+        collectionEditorFilterCollectionId = "";
+        elements.collectionFilterCollection.value = "";
+    }
+
     persist();
+    setCollectionColorInputDefault();
     renderAll();
 }
 
@@ -597,6 +761,113 @@ function toggleCardInCollection(collectionId, cardId, shouldInclude) {
 
     persist();
     renderCollections();
+    renderCollectionEditor();
+    renderFlashcards();
+}
+
+function updateCollectionColor(collectionId, color) {
+    const collection = state.collections.find((item) => item.id === collectionId);
+    if (!collection) {
+        return;
+    }
+
+    collection.color = color;
+    persist();
+    renderCollections();
+    renderCollectionEditor();
+    renderFlashcards();
+}
+
+function populateCollectionFilterOptions() {
+    const currentValue = collectionEditorFilterCollectionId;
+    elements.collectionFilterCollection.innerHTML = "";
+
+    const anyOption = document.createElement("option");
+    anyOption.value = "";
+    anyOption.textContent = "Any collection";
+    elements.collectionFilterCollection.appendChild(anyOption);
+
+    state.collections.forEach((collection) => {
+        const option = document.createElement("option");
+        option.value = collection.id;
+        option.textContent = collection.name;
+        elements.collectionFilterCollection.appendChild(option);
+    });
+
+    const hasCurrentValue =
+        currentValue === "" || state.collections.some((collection) => collection.id === currentValue);
+
+    collectionEditorFilterCollectionId = hasCurrentValue ? currentValue : "";
+    elements.collectionFilterCollection.value = collectionEditorFilterCollectionId;
+    elements.collectionMembershipFilter.value = collectionEditorMembershipFilter;
+}
+
+function getFilteredFlashcards() {
+    return state.flashcards.filter((card) => matchesCardSearch(card, flashcardSearchTerm));
+}
+
+function getFilteredCollectionEditorCards(selectedCollection) {
+    return state.flashcards.filter((card) => {
+        if (!matchesCardSearch(card, collectionEditorSearchTerm)) {
+            return false;
+        }
+
+        const memberships = getCardMemberships(card.id);
+        const isInSelectedCollection = selectedCollection.cardIds.includes(card.id);
+
+        if (collectionEditorMembershipFilter === "in-selected" && !isInSelectedCollection) {
+            return false;
+        }
+
+        if (collectionEditorMembershipFilter === "not-in-selected" && isInSelectedCollection) {
+            return false;
+        }
+
+        if (collectionEditorMembershipFilter === "has-collections" && memberships.length === 0) {
+            return false;
+        }
+
+        if (collectionEditorMembershipFilter === "no-collections" && memberships.length > 0) {
+            return false;
+        }
+
+        if (
+            collectionEditorFilterCollectionId &&
+            !memberships.some((membership) => membership.id === collectionEditorFilterCollectionId)
+        ) {
+            return false;
+        }
+
+        return true;
+    });
+}
+
+function createCollectionPillsContainer(cardId) {
+    const memberships = getCardMemberships(cardId);
+    const container = document.createElement("div");
+    container.className = "collection-pills";
+
+    if (memberships.length === 0) {
+        const pill = document.createElement("span");
+        pill.className = "collection-pill empty";
+        pill.textContent = "No collection";
+        container.appendChild(pill);
+        return container;
+    }
+
+    memberships.forEach((collection) => {
+        const pill = document.createElement("span");
+        pill.className = "collection-pill";
+        pill.style.setProperty("--collection-color", getCollectionColor(collection));
+        pill.innerHTML = `<span class="collection-pill-dot"></span>${escapeHtml(collection.name)}`;
+        container.appendChild(pill);
+    });
+
+    return container;
+}
+
+function getCardMemberships(cardId) {
+    return state.collections.filter((collection) => collection.cardIds.includes(cardId));
 }
 
 function persist() {
@@ -685,7 +956,7 @@ function findExistingFlashcardByGerman(german) {
     return state.flashcards.find((card) => normalizeWord(card.german) === normalizedGerman) || null;
 }
 
-function getOrCreateCollectionByName(name) {
+function getOrCreateCollectionByName(name, color = getSuggestedCollectionColor()) {
     const normalizedName = normalizeWord(name);
 
     if (!normalizedName) {
@@ -703,8 +974,44 @@ function getOrCreateCollectionByName(name) {
         id: crypto.randomUUID(),
         name: name.trim(),
         cardIds: [],
+        color,
     };
 
     state.collections.push(collection);
     return { collection, created: true };
+}
+
+function matchesCardSearch(card, searchTerm) {
+    const normalizedSearch = normalizeWord(searchTerm);
+
+    if (!normalizedSearch) {
+        return true;
+    }
+
+    return (
+        normalizeWord(card.german).includes(normalizedSearch) ||
+        (card.englishAnswers || []).some((answer) => normalizeWord(answer).includes(normalizedSearch))
+    );
+}
+
+function pruneSelectedFlashcardIds() {
+    const validIds = new Set(state.flashcards.map((card) => card.id));
+
+    [...selectedFlashcardIds].forEach((id) => {
+        if (!validIds.has(id)) {
+            selectedFlashcardIds.delete(id);
+        }
+    });
+}
+
+function getCollectionColor(collection) {
+    return collection?.color || "#64748b";
+}
+
+function getSuggestedCollectionColor() {
+    return DEFAULT_COLLECTION_COLORS[state.collections.length % DEFAULT_COLLECTION_COLORS.length];
+}
+
+function setCollectionColorInputDefault() {
+    elements.collectionColor.value = getSuggestedCollectionColor();
 }
