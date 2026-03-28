@@ -2,8 +2,9 @@ const LEGACY_STORAGE_KEY = "de_en_flashcards_app_v1";
 const UI_PREFS_KEY = "de_en_flashcards_ui_prefs_v1";
 const DEFAULT_COLLECTION_COLOR = "#64748b";
 const DATABASE_NAME = "de_en_flashcards_app";
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 const STATE_STORE_NAME = "app_state";
+const IMAGE_STORE_NAME = "flashcard_images";
 const STATE_RECORD_KEY = "state";
 
 export function createEmptyState() {
@@ -34,7 +35,7 @@ function sanitizeFlashcard(card) {
         id: String(card?.id || crypto.randomUUID()),
         german: String(card?.german || "").trim(),
         englishAnswers: normalizeEnglishAnswers(card),
-        imageData: String(card?.imageData || ""),
+        hasImage: Boolean(card?.hasImage || getInlineImageData(card)),
     };
 }
 
@@ -141,16 +142,20 @@ export async function loadState() {
     const storedValue = await readStateRecord(database);
 
     if (storedValue) {
-        return sanitizeState(storedValue);
+        if (stateNeedsImageMigration(storedValue)) {
+            await writeCompleteState(database, storedValue, { replaceImages: true });
+        }
+
+        const safeState = sanitizeState(storedValue);
+        return attachStoredImagesToState(database, safeState);
     }
 
     const legacyState = readLegacyState();
 
     if (legacyState) {
-        const safeState = sanitizeState(legacyState);
-        await writeStateRecord(database, safeState);
+        const migratedState = await replaceState(legacyState);
         clearLegacyState();
-        return safeState;
+        return migratedState;
     }
 
     return createEmptyState();
@@ -158,13 +163,41 @@ export async function loadState() {
 
 export async function saveState(state) {
     const database = await openDatabase();
-    await writeStateRecord(database, sanitizeState(state));
+    await writeMetadataState(database, state);
 }
 
 export async function replaceState(nextState) {
-    const safeState = sanitizeState(nextState);
-    await saveState(safeState);
-    return safeState;
+    const database = await openDatabase();
+    await writeCompleteState(database, nextState, { replaceImages: true });
+    return attachStoredImagesToState(database, sanitizeState(nextState));
+}
+
+export async function saveFlashcardImage(cardId, imageSource) {
+    const blob = await imageSourceToBlob(imageSource);
+    const database = await openDatabase();
+
+    await upsertImageRecord(database, String(cardId), blob);
+
+    return URL.createObjectURL(blob);
+}
+
+export async function createExportState(state) {
+    const database = await openDatabase();
+    const safeState = sanitizeState(state);
+    const imageDataUrlsByCardId = await readImageDataUrlsByCardId(
+        database,
+        safeState.flashcards.map((card) => card.id),
+    );
+
+    return {
+        ...safeState,
+        flashcards: safeState.flashcards.map((card) => ({
+            ...card,
+            imageData:
+                imageDataUrlsByCardId.get(card.id) ||
+                (isInlineDataUrl(card?.imageData) ? card.imageData : ""),
+        })),
+    };
 }
 
 export function loadUiPrefs() {
@@ -205,6 +238,10 @@ function openDatabase() {
             if (!database.objectStoreNames.contains(STATE_STORE_NAME)) {
                 database.createObjectStore(STATE_STORE_NAME, { keyPath: "key" });
             }
+
+            if (!database.objectStoreNames.contains(IMAGE_STORE_NAME)) {
+                database.createObjectStore(IMAGE_STORE_NAME, { keyPath: "cardId" });
+            }
         });
 
         request.addEventListener("success", () => resolve(request.result));
@@ -229,10 +266,17 @@ function readStateRecord(database) {
     });
 }
 
-function writeStateRecord(database, state) {
+function writeMetadataState(database, rawState) {
+    const safeState = sanitizeState(rawState);
+    const inlineImages = collectInlineImagesByCardId(rawState, safeState);
+
     return new Promise((resolve, reject) => {
-        const transaction = database.transaction(STATE_STORE_NAME, "readwrite");
-        const store = transaction.objectStore(STATE_STORE_NAME);
+        const transaction = database.transaction([STATE_STORE_NAME, IMAGE_STORE_NAME], "readwrite");
+        const stateStore = transaction.objectStore(STATE_STORE_NAME);
+        const imageStore = transaction.objectStore(IMAGE_STORE_NAME);
+        const desiredImageIds = new Set(
+            safeState.flashcards.filter((card) => card.hasImage).map((card) => card.id),
+        );
 
         transaction.addEventListener("complete", () => resolve());
         transaction.addEventListener("abort", () => {
@@ -242,7 +286,251 @@ function writeStateRecord(database, state) {
             reject(transaction.error || new Error("Could not save data to IndexedDB."));
         });
 
-        store.put({ key: STATE_RECORD_KEY, value: sanitizeState(state) });
+        stateStore.put({ key: STATE_RECORD_KEY, value: safeState });
+
+        inlineImages.forEach((imageBlob, cardId) => {
+            imageStore.put({
+                cardId,
+                blob: imageBlob,
+            });
+        });
+
+        const keysRequest = imageStore.getAllKeys();
+
+        keysRequest.addEventListener("success", () => {
+            (keysRequest.result || []).forEach((cardId) => {
+                if (!desiredImageIds.has(String(cardId))) {
+                    imageStore.delete(cardId);
+                }
+            });
+        });
+    });
+}
+
+function writeCompleteState(database, rawState, { replaceImages = false } = {}) {
+    const safeState = sanitizeState(rawState);
+    const inlineImages = collectInlineImagesByCardId(rawState, safeState);
+
+    return new Promise((resolve, reject) => {
+        const transaction = database.transaction([STATE_STORE_NAME, IMAGE_STORE_NAME], "readwrite");
+        const stateStore = transaction.objectStore(STATE_STORE_NAME);
+        const imageStore = transaction.objectStore(IMAGE_STORE_NAME);
+
+        transaction.addEventListener("complete", () => resolve());
+        transaction.addEventListener("abort", () => {
+            reject(transaction.error || new Error("Could not save data to IndexedDB."));
+        });
+        transaction.addEventListener("error", () => {
+            reject(transaction.error || new Error("Could not save data to IndexedDB."));
+        });
+
+        stateStore.put({ key: STATE_RECORD_KEY, value: safeState });
+
+        if (replaceImages) {
+            imageStore.clear();
+        }
+
+        inlineImages.forEach((imageBlob, cardId) => {
+            imageStore.put({
+                cardId,
+                blob: imageBlob,
+            });
+        });
+    });
+}
+
+function upsertImageRecord(database, cardId, blob) {
+    return new Promise((resolve, reject) => {
+        const transaction = database.transaction(IMAGE_STORE_NAME, "readwrite");
+        const store = transaction.objectStore(IMAGE_STORE_NAME);
+
+        transaction.addEventListener("complete", () => resolve());
+        transaction.addEventListener("abort", () => {
+            reject(transaction.error || new Error("Could not save the flashcard image."));
+        });
+        transaction.addEventListener("error", () => {
+            reject(transaction.error || new Error("Could not save the flashcard image."));
+        });
+
+        store.put({ cardId, blob });
+    });
+}
+
+function attachStoredImagesToState(database, state) {
+    const cardIds = state.flashcards.map((card) => card.id);
+
+    if (cardIds.length === 0) {
+        return Promise.resolve(state);
+    }
+
+    return new Promise((resolve, reject) => {
+        const transaction = database.transaction(IMAGE_STORE_NAME, "readonly");
+        const store = transaction.objectStore(IMAGE_STORE_NAME);
+        const imageUrlsByCardId = new Map();
+        let remaining = cardIds.length;
+        let settled = false;
+
+        const maybeResolve = () => {
+            if (!settled && remaining === 0) {
+                settled = true;
+                resolve({
+                    ...state,
+                    flashcards: state.flashcards.map((card) => ({
+                        ...card,
+                        hasImage: imageUrlsByCardId.has(card.id) || Boolean(card.hasImage),
+                        imageData: imageUrlsByCardId.get(card.id) || "",
+                    })),
+                });
+            }
+        };
+
+        cardIds.forEach((cardId) => {
+            const request = store.get(cardId);
+
+            request.addEventListener("success", () => {
+                const record = request.result;
+
+                if (record?.blob instanceof Blob) {
+                    imageUrlsByCardId.set(cardId, URL.createObjectURL(record.blob));
+                }
+
+                remaining -= 1;
+                maybeResolve();
+            });
+
+            request.addEventListener("error", () => {
+                if (!settled) {
+                    settled = true;
+                    reject(request.error || new Error("Could not read flashcard images from IndexedDB."));
+                }
+            });
+        });
+    });
+}
+
+function readImageDataUrlsByCardId(database, cardIds) {
+    if (!Array.isArray(cardIds) || cardIds.length === 0) {
+        return Promise.resolve(new Map());
+    }
+
+    return new Promise((resolve, reject) => {
+        const transaction = database.transaction(IMAGE_STORE_NAME, "readonly");
+        const store = transaction.objectStore(IMAGE_STORE_NAME);
+        const result = new Map();
+        let remaining = cardIds.length;
+        let settled = false;
+
+        const maybeResolve = () => {
+            if (!settled && remaining === 0) {
+                settled = true;
+                resolve(result);
+            }
+        };
+
+        cardIds.forEach((cardId) => {
+            const request = store.get(cardId);
+
+            request.addEventListener("success", async () => {
+                try {
+                    const record = request.result;
+
+                    if (record?.blob instanceof Blob) {
+                        result.set(cardId, await blobToDataUrl(record.blob));
+                    }
+
+                    remaining -= 1;
+                    maybeResolve();
+                } catch (error) {
+                    if (!settled) {
+                        settled = true;
+                        reject(error);
+                    }
+                }
+            });
+
+            request.addEventListener("error", () => {
+                if (!settled) {
+                    settled = true;
+                    reject(request.error || new Error("Could not read flashcard images from IndexedDB."));
+                }
+            });
+        });
+    });
+}
+
+function collectInlineImagesByCardId(rawState, safeState) {
+    const sanitizedCardIds = safeState.flashcards.map((card) => card.id);
+    const imagesByCardId = new Map();
+
+    (Array.isArray(rawState?.flashcards) ? rawState.flashcards : []).forEach((card, index) => {
+        const cardId = sanitizedCardIds[index];
+
+        if (!cardId) {
+            return;
+        }
+
+        const inlineImageData = getInlineImageData(card);
+
+        if (!inlineImageData) {
+            return;
+        }
+
+        imagesByCardId.set(cardId, dataUrlToBlob(inlineImageData));
+    });
+
+    return imagesByCardId;
+}
+
+function stateNeedsImageMigration(rawState) {
+    return Boolean(
+        Array.isArray(rawState?.flashcards) &&
+            rawState.flashcards.some(
+                (card) => getInlineImageData(card) || typeof card?.hasImage !== "boolean",
+            ),
+    );
+}
+
+function getInlineImageData(card) {
+    return isInlineDataUrl(card?.imageData) ? card.imageData : "";
+}
+
+function isInlineDataUrl(value) {
+    return /^data:/i.test(String(value || ""));
+}
+
+function imageSourceToBlob(imageSource) {
+    if (imageSource instanceof Blob) {
+        return Promise.resolve(imageSource);
+    }
+
+    if (isInlineDataUrl(imageSource)) {
+        return Promise.resolve(dataUrlToBlob(imageSource));
+    }
+
+    return Promise.reject(new Error("Unsupported flashcard image format."));
+}
+
+function dataUrlToBlob(dataUrl) {
+    const [header, payload = ""] = String(dataUrl || "").split(",", 2);
+    const mimeMatch = /^data:([^;]+);base64$/i.exec(header || "");
+    const mimeType = mimeMatch?.[1] || "application/octet-stream";
+    const binary = atob(payload);
+    const bytes = new Uint8Array(binary.length);
+
+    for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+    }
+
+    return new Blob([bytes], { type: mimeType });
+}
+
+function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("Could not read image data for export."));
+        reader.readAsDataURL(blob);
     });
 }
 

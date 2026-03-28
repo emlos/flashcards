@@ -3,6 +3,8 @@ import {
     loadState,
     saveState,
     replaceState,
+    saveFlashcardImage,
+    createExportState,
     loadUiPrefs,
     saveUiPrefs,
 } from "./storage.js";
@@ -247,7 +249,6 @@ async function onFlashcardSubmit(event) {
         return;
     }
 
-    const imageData = imageFile ? await fileToDataUrl(imageFile) : "";
     const existingCard = findExistingFlashcardByGerman(german);
 
     if (existingCard) {
@@ -255,8 +256,8 @@ async function onFlashcardSubmit(event) {
 
         existingCard.englishAnswers = merged;
 
-        if (imageData && !existingCard.imageData) {
-            existingCard.imageData = imageData;
+        if (imageFile && !existingCard.hasImage) {
+            await setFlashcardImage(existingCard, imageFile);
         }
 
         console.info(
@@ -265,12 +266,19 @@ async function onFlashcardSubmit(event) {
             }.`,
         );
     } else {
-        state.flashcards.push({
+        const card = {
             id: crypto.randomUUID(),
             german,
             englishAnswers,
-            imageData,
-        });
+            imageData: "",
+            hasImage: false,
+        };
+
+        state.flashcards.push(card);
+
+        if (imageFile) {
+            await setFlashcardImage(card, imageFile);
+        }
     }
 
     await persist();
@@ -360,15 +368,14 @@ async function onCollectionFlashcardSubmit(event) {
         return;
     }
 
-    const imageData = imageFile ? await fileToDataUrl(imageFile) : "";
     let card = findExistingFlashcardByGerman(german);
 
     if (card) {
         const { merged, added } = mergeEnglishAnswers(card.englishAnswers, englishAnswers);
         card.englishAnswers = merged;
 
-        if (imageData && !card.imageData) {
-            card.imageData = imageData;
+        if (imageFile && !card.hasImage) {
+            await setFlashcardImage(card, imageFile);
         }
 
         if (added.length > 0 || !collection.cardIds.includes(card.id)) {
@@ -383,9 +390,14 @@ async function onCollectionFlashcardSubmit(event) {
             id: crypto.randomUUID(),
             german,
             englishAnswers,
-            imageData,
+            imageData: "",
+            hasImage: false,
         };
         state.flashcards.push(card);
+
+        if (imageFile) {
+            await setFlashcardImage(card, imageFile);
+        }
     }
 
     ensureCardInCollection(collection.id, card.id);
@@ -417,7 +429,7 @@ function onStudySetupSubmit(event) {
     let cards = getStudyCardsForSelection();
 
     if (mode === "image-de") {
-        cards = cards.filter((card) => card.imageData);
+        cards = cards.filter((card) => card.hasImage);
     }
 
     if (cards.length === 0) {
@@ -536,7 +548,7 @@ async function onBulkImport() {
             return;
         }
 
-        const importResult = applyImportedFlashcardEntries(entries, { logLabel: "Bulk import" });
+        const importResult = await applyImportedFlashcardEntries(entries, { logLabel: "Bulk import" });
 
         await persist();
         finalizeImportState();
@@ -583,7 +595,7 @@ async function onBackupImport() {
             state = await replaceState(importedState);
             finalizeImportState({ resetStudySelection: true, resetSelectedCollection: true });
         } else {
-            const mergeResult = mergeBackupStateIntoCurrentState(importedState);
+            const mergeResult = await mergeBackupStateIntoCurrentState(importedState);
             await persist();
             finalizeImportState();
 
@@ -624,10 +636,14 @@ async function onBackupImport() {
     }
 }
 
-function onExport() {
-    const content = exportBackupText(state);
-    downloadTextFile(content, "flashcards-backup.txt");
-    showImportExportMessage("Export created.", true);
+async function onExport() {
+    try {
+        const content = exportBackupText(await createExportState(state));
+        downloadTextFile(content, "flashcards-backup.txt");
+        showImportExportMessage("Export created.", true);
+    } catch (error) {
+        showImportExportMessage(error.message || "Export failed.", false);
+    }
 }
 
 function renderAll() {
@@ -681,7 +697,7 @@ function renderFlashcards() {
         main.innerHTML = `
       <div class="item-title">${escapeHtml(card.german)} — ${escapeHtml(card.englishAnswers.join(", "))}</div>
       <div class="item-subtitle">ID: ${escapeHtml(card.id)}</div>
-      <div class="item-tags">${card.imageData ? "Has image card" : "No image"}</div>
+      <div class="item-tags">${card.hasImage ? "Has image card" : "No image"}</div>
     `;
         main.appendChild(createCollectionPillsContainer(card.id));
 
@@ -835,7 +851,7 @@ function renderCollectionEditor() {
         text.className = "checkbox-item-content";
         text.innerHTML = `
       <div class="item-title">${escapeHtml(card.german)} — ${escapeHtml(card.englishAnswers.join(", "))}</div>
-      <div class="item-subtitle">${card.imageData ? "Has image" : "No image"}</div>
+      <div class="item-subtitle">${card.hasImage ? "Has image" : "No image"}</div>
     `;
         text.appendChild(createCollectionPillsContainer(card.id));
 
@@ -1273,12 +1289,13 @@ function convertBackupStateToImportedEntries(backupState) {
             german: card.german,
             englishAnswers: [...(card.englishAnswers || [])],
             imageData: card.imageData || "",
+            hasImage: Boolean(card.imageData),
         },
         collections: collectionRefsByCardId.get(card.id) || [],
     }));
 }
 
-function applyImportedFlashcardEntries(entries, { logLabel = "Import" } = {}) {
+async function applyImportedFlashcardEntries(entries, { logLabel = "Import" } = {}) {
     let createdCardsCount = 0;
     let reusedCardsCount = 0;
     let createdCollectionsCount = 0;
@@ -1297,9 +1314,15 @@ function applyImportedFlashcardEntries(entries, { logLabel = "Import" } = {}) {
                 id: entry.card.id || crypto.randomUUID(),
                 german: entry.card.german,
                 englishAnswers: [...(entry.card.englishAnswers || [])],
-                imageData: entry.card.imageData || "",
+                imageData: "",
+                hasImage: false,
             };
             state.flashcards.push(card);
+
+            if (entry.card.imageData) {
+                await setFlashcardImage(card, entry.card.imageData);
+            }
+
             createdCardsCount += 1;
         } else {
             reusedCardsCount += 1;
@@ -1308,8 +1331,8 @@ function applyImportedFlashcardEntries(entries, { logLabel = "Import" } = {}) {
             card.englishAnswers = mergeResult.merged;
             addedMeanings = mergeResult.added;
 
-            if (entry.card.imageData && !card.imageData) {
-                card.imageData = entry.card.imageData;
+            if (entry.card.imageData && !card.hasImage) {
+                await setFlashcardImage(card, entry.card.imageData);
                 adoptedImage = true;
             }
         }
@@ -1438,9 +1461,9 @@ function mergeBackupStudyHistory(importedHistory, collectionIdMap) {
     return nextHistoryEntries.length;
 }
 
-function mergeBackupStateIntoCurrentState(importedState) {
+async function mergeBackupStateIntoCurrentState(importedState) {
     const importedEntries = convertBackupStateToImportedEntries(importedState);
-    const flashcardImportResult = applyImportedFlashcardEntries(importedEntries, {
+    const flashcardImportResult = await applyImportedFlashcardEntries(importedEntries, {
         logLabel: "Backup import",
     });
     const mergedCardStatsCount = mergeBackupCardStats(
@@ -2055,6 +2078,17 @@ function getValidSelectedCollectionId(candidateId) {
     return state.collections[0]?.id || null;
 }
 
+async function setFlashcardImage(card, imageSource) {
+    const nextImageUrl = await saveFlashcardImage(card.id, imageSource);
+
+    if (card.imageData && card.imageData.startsWith("blob:")) {
+        URL.revokeObjectURL(card.imageData);
+    }
+
+    card.imageData = nextImageUrl;
+    card.hasImage = true;
+}
+
 function cloneStateForPersistence(nextState) {
     return JSON.parse(JSON.stringify(nextState));
 }
@@ -2122,16 +2156,6 @@ function downloadTextFile(content, filename) {
     link.download = filename;
     link.click();
     URL.revokeObjectURL(url);
-}
-
-function fileToDataUrl(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => reject(new Error("Could not read image file."));
-        reader.readAsDataURL(file);
-    });
 }
 
 function escapeHtml(value) {
