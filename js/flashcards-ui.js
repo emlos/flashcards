@@ -1,4 +1,5 @@
 import { PAGINATION_PAGE_SIZES } from "./constants.js";
+import { formatRemoteImageAttribution } from "./image-search.js";
 import {
     buildFlashcardEditSaveMessage,
     escapeHtml,
@@ -47,6 +48,7 @@ export function createFlashcardsUi(context) {
         findExistingFlashcardByGerman,
         applyUploadedImageToCard,
         clearFlashcardImage,
+        requestFlashcardAutoImage,
         persist,
         showAppStatusMessage,
         setCardMemberships,
@@ -108,6 +110,16 @@ export function createFlashcardsUi(context) {
     `;
             main.appendChild(createCollectionPillsContainer(card.id));
 
+            if (card.imageAttribution?.pageUrl) {
+                const sourceLink = document.createElement("a");
+                sourceLink.className = "flashcard-image-source-link muted";
+                sourceLink.href = card.imageAttribution.pageUrl;
+                sourceLink.target = "_blank";
+                sourceLink.rel = "noreferrer noopener";
+                sourceLink.textContent = formatRemoteImageAttribution(card.imageAttribution) || "Image source";
+                main.appendChild(sourceLink);
+            }
+
             if (editingFlashcardId === card.id) {
                 main.appendChild(createFlashcardEditPanel(card));
             }
@@ -122,6 +134,15 @@ export function createFlashcardsUi(context) {
                 img.alt = card.german;
                 side.appendChild(img);
             }
+
+            const autoImageButton = document.createElement("button");
+            autoImageButton.type = "button";
+            autoImageButton.className = "secondary";
+            autoImageButton.textContent = card.hasImage ? "Change image" : "Auto image";
+            autoImageButton.addEventListener("click", () => {
+                void requestFlashcardAutoImage(card.id);
+            });
+            side.appendChild(autoImageButton);
 
             const editButton = document.createElement("button");
             editButton.type = "button";

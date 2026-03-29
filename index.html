@@ -50,6 +50,15 @@
               Optional image
               <input type="file" id="flashcard-image" accept="image/*" />
             </label>
+            <div class="image-assist-block">
+              <p class="muted image-assist-help">Or search Wikimedia Commons and attach an image by URL.</p>
+              <div class="toolbar toolbar-wrap image-assist-toolbar">
+                <input type="search" id="flashcard-image-query" placeholder="Search term (defaults to first English meaning)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+                <button type="button" id="flashcard-auto-image-button" class="secondary">Auto-find image</button>
+                <button type="button" id="flashcard-clear-auto-image-button" class="secondary hidden">Clear selected image</button>
+              </div>
+              <div id="flashcard-auto-image-preview" class="selected-remote-image hidden"></div>
+            </div>
             <button type="submit">Add flashcard</button>
           </form>
         </div>
@@ -64,6 +73,7 @@
             <input type="search" id="flashcard-search" placeholder="Search German or English meanings" />
             <button id="flashcard-select-visible" type="button" class="secondary">Select visible</button>
             <button id="flashcard-clear-selection" type="button" class="secondary">Clear selection</button>
+            <button id="flashcard-bulk-image-fill" type="button" class="secondary">Auto-fill missing images</button>
             <button id="flashcard-delete-selected" type="button" class="danger">Delete selected</button>
           </div>
 
@@ -113,6 +123,10 @@
               <p class="muted">Choose which flashcards belong to this collection.</p>
 
               <div class="stack-form editor-controls">
+                <div class="toolbar toolbar-wrap image-assist-toolbar">
+                  <button id="collection-bulk-image-fill" type="button" class="secondary">Auto-fill missing images in this collection</button>
+                </div>
+
                 <label>
                   Search flashcards
                   <input type="search" id="collection-search" placeholder="Search German or English meanings" />
@@ -153,6 +167,15 @@
                       Optional image
                       <input type="file" id="collection-flashcard-image" accept="image/*" />
                     </label>
+                    <div class="image-assist-block">
+                      <p class="muted image-assist-help">Or search Wikimedia Commons and attach an image by URL.</p>
+                      <div class="toolbar toolbar-wrap image-assist-toolbar">
+                        <input type="search" id="collection-flashcard-image-query" placeholder="Search term (defaults to first English meaning)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+                        <button type="button" id="collection-flashcard-auto-image-button" class="secondary">Auto-find image</button>
+                        <button type="button" id="collection-flashcard-clear-auto-image-button" class="secondary hidden">Clear selected image</button>
+                      </div>
+                      <div id="collection-flashcard-auto-image-preview" class="selected-remote-image hidden"></div>
+                    </div>
                     <button type="submit">Add to this collection</button>
                   </form>
                 </details>
@@ -384,6 +407,24 @@ COLLECTION\tcollection-id\tencodedName\tcardId1,cardId2,cardId3\tencodedColor</p
         <button id="backup-import-replace-button" type="button" class="danger">Replace current data</button>
       </div>
       <p id="backup-import-modal-footnote" class="muted modal-footnote">Merge keeps your current data and adds what it can. Replace overwrites everything in the app with the backup.</p>
+    </div>
+  </div>
+
+  <div id="image-search-modal" class="modal-overlay hidden" role="dialog" aria-modal="true"
+    aria-labelledby="image-search-modal-title" aria-describedby="image-search-modal-description">
+    <div class="modal-card image-search-modal-card">
+      <div class="section-row modal-header-row">
+        <h3 id="image-search-modal-title">Find image</h3>
+        <button id="image-search-cancel-button" type="button" class="secondary modal-close-button"
+          aria-label="Close image search">Cancel</button>
+      </div>
+      <p id="image-search-modal-description" class="muted">Search Wikimedia Commons and attach an image by URL.</p>
+      <form id="image-search-form" class="inline-form image-search-form" autocomplete="off">
+        <input id="image-search-query" type="search" placeholder="dog" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" required />
+        <button id="image-search-submit-button" type="submit">Search</button>
+      </form>
+      <p id="image-search-status" class="muted"></p>
+      <div id="image-search-results" class="image-search-results"></div>
     </div>
   </div>
 

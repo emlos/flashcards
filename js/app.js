@@ -48,6 +48,12 @@ import {
     parseStudyCardLimit,
 } from "./shared-utils.js";
 import { createFlashcardsUi } from "./flashcards-ui.js";
+import {
+    buildRemoteImageAttribution,
+    deriveImageSearchQuery,
+    formatRemoteImageAttribution,
+    searchWikimediaCommonsImages,
+} from "./image-search.js";
 import { createStudyUi } from "./study-ui.js";
 
 let state = createEmptyState();
@@ -66,6 +72,13 @@ let selectedStudyCollectionIds = new Set(
 );
 let studySessionType = uiPrefs.studySessionType || STUDY_SESSION_TYPES.free;
 let srsNewCardsPerDay = uiPrefs.srsNewCardsPerDay || String(DEFAULT_SRS_NEW_CARDS_PER_DAY);
+const pendingFormRemoteImages = {
+    flashcard: null,
+    collectionFlashcard: null,
+};
+let imageSearchModalContext = null;
+let imageSearchAbortController = null;
+let bulkImageFillInProgress = false;
 const selectedFlashcardIds = new Set();
 let persistQueue = Promise.resolve(false);
 let flashcardRenderDebounceId = 0;
@@ -92,9 +105,14 @@ const elements = {
     flashcardGerman: document.getElementById("flashcard-german"),
     flashcardEnglish: document.getElementById("flashcard-english"),
     flashcardImage: document.getElementById("flashcard-image"),
+    flashcardImageQuery: document.getElementById("flashcard-image-query"),
+    flashcardAutoImageButton: document.getElementById("flashcard-auto-image-button"),
+    flashcardClearAutoImageButton: document.getElementById("flashcard-clear-auto-image-button"),
+    flashcardAutoImagePreview: document.getElementById("flashcard-auto-image-preview"),
     flashcardSearch: document.getElementById("flashcard-search"),
     flashcardSelectVisible: document.getElementById("flashcard-select-visible"),
     flashcardClearSelection: document.getElementById("flashcard-clear-selection"),
+    flashcardBulkImageFill: document.getElementById("flashcard-bulk-image-fill"),
     flashcardDeleteSelected: document.getElementById("flashcard-delete-selected"),
     flashcardSelectionSummary: document.getElementById("flashcard-selection-summary"),
     flashcardsList: document.getElementById("flashcards-list"),
@@ -119,6 +137,11 @@ const elements = {
     collectionFlashcardGerman: document.getElementById("collection-flashcard-german"),
     collectionFlashcardEnglish: document.getElementById("collection-flashcard-english"),
     collectionFlashcardImage: document.getElementById("collection-flashcard-image"),
+    collectionFlashcardImageQuery: document.getElementById("collection-flashcard-image-query"),
+    collectionFlashcardAutoImageButton: document.getElementById("collection-flashcard-auto-image-button"),
+    collectionFlashcardClearAutoImageButton: document.getElementById("collection-flashcard-clear-auto-image-button"),
+    collectionFlashcardAutoImagePreview: document.getElementById("collection-flashcard-auto-image-preview"),
+    collectionBulkImageFill: document.getElementById("collection-bulk-image-fill"),
     collectionEditorSummary: document.getElementById("collection-editor-summary"),
     collectionCardsEditor: document.getElementById("collection-cards-editor"),
     collectionEditorPagination: document.getElementById("collection-editor-pagination"),
@@ -188,6 +211,13 @@ const elements = {
     backupImportReplaceButton: document.getElementById("backup-import-replace-button"),
     backupImportCancelButton: document.getElementById("backup-import-cancel-button"),
     backupImportModalFootnote: document.getElementById("backup-import-modal-footnote"),
+    imageSearchModal: document.getElementById("image-search-modal"),
+    imageSearchForm: document.getElementById("image-search-form"),
+    imageSearchQuery: document.getElementById("image-search-query"),
+    imageSearchSubmitButton: document.getElementById("image-search-submit-button"),
+    imageSearchStatus: document.getElementById("image-search-status"),
+    imageSearchResults: document.getElementById("image-search-results"),
+    imageSearchCancelButton: document.getElementById("image-search-cancel-button"),
 };
 
 const flashcardsUi = createFlashcardsUi({
@@ -221,6 +251,7 @@ const flashcardsUi = createFlashcardsUi({
     findExistingFlashcardByGerman,
     applyUploadedImageToCard,
     clearFlashcardImage,
+    requestFlashcardAutoImage,
     persist,
     showAppStatusMessage,
     setCardMemberships,
@@ -367,9 +398,13 @@ function bindEvents() {
     });
 
     elements.flashcardForm.addEventListener("submit", onFlashcardSubmit);
+    elements.flashcardAutoImageButton.addEventListener("click", onFlashcardAutoImageClick);
+    elements.flashcardClearAutoImageButton.addEventListener("click", () => clearPendingFormRemoteImage("flashcard"));
+    elements.flashcardImage.addEventListener("change", onFlashcardImageInputChange);
     elements.flashcardSearch.addEventListener("input", onFlashcardSearchInput);
     elements.flashcardSelectVisible.addEventListener("click", onSelectVisibleFlashcards);
     elements.flashcardClearSelection.addEventListener("click", onClearFlashcardSelection);
+    elements.flashcardBulkImageFill.addEventListener("click", onBulkFillAllMissingImages);
     elements.flashcardDeleteSelected.addEventListener("click", onDeleteSelectedFlashcards);
 
     elements.collectionForm.addEventListener("submit", onCollectionSubmit);
@@ -377,6 +412,10 @@ function bindEvents() {
     elements.collectionMembershipFilter.addEventListener("change", onCollectionFilterChange);
     elements.collectionFilterCollection.addEventListener("change", onCollectionFilterChange);
     elements.collectionFlashcardForm.addEventListener("submit", onCollectionFlashcardSubmit);
+    elements.collectionFlashcardAutoImageButton.addEventListener("click", onCollectionFlashcardAutoImageClick);
+    elements.collectionFlashcardClearAutoImageButton.addEventListener("click", () => clearPendingFormRemoteImage("collectionFlashcard"));
+    elements.collectionFlashcardImage.addEventListener("change", onCollectionFlashcardImageInputChange);
+    elements.collectionBulkImageFill.addEventListener("click", onBulkFillCollectionMissingImages);
 
     elements.studySetupForm.addEventListener("submit", onStudySetupSubmit);
     elements.studySessionTypeToggle.addEventListener("click", onStudySessionTypeToggle);
@@ -398,6 +437,10 @@ function bindEvents() {
     elements.backupImportCancelButton.addEventListener("click", () => closeActionModal(null));
     elements.backupImportModal.addEventListener("click", onActionModalClick);
     elements.backupImportModal.addEventListener("keydown", onActionModalKeyDown);
+    elements.imageSearchForm.addEventListener("submit", onImageSearchSubmit);
+    elements.imageSearchCancelButton.addEventListener("click", closeImageSearchModal);
+    elements.imageSearchModal.addEventListener("click", onImageSearchModalClick);
+    elements.imageSearchModal.addEventListener("keydown", onImageSearchModalKeyDown);
     elements.studyResetButton.addEventListener("click", resetStudyView);
 
     elements.bulkImportButton.addEventListener("click", onBulkImport);
@@ -574,6 +617,7 @@ async function onFlashcardSubmit(event) {
     const german = elements.flashcardGerman.value.trim();
     const englishAnswers = parseEnglishAnswersInput(elements.flashcardEnglish.value);
     const imageFile = elements.flashcardImage.files[0];
+    const remoteSelection = pendingFormRemoteImages.flashcard;
 
     if (!german || englishAnswers.length === 0) {
         return;
@@ -592,6 +636,8 @@ async function onFlashcardSubmit(event) {
 
             if (imageFile) {
                 imageUpdate = await applyUploadedImageToCard(existingCard, imageFile);
+            } else if (remoteSelection) {
+                imageUpdate = applyRemoteImageToCard(existingCard, remoteSelection);
             }
 
             existingCard.englishAnswers = merged;
@@ -615,6 +661,7 @@ async function onFlashcardSubmit(event) {
                 german,
                 englishAnswers,
                 imageData: "",
+                imageAttribution: null,
                 hasImage: false,
             };
 
@@ -628,6 +675,8 @@ async function onFlashcardSubmit(event) {
             try {
                 if (imageFile) {
                     imageUpdate = await applyUploadedImageToCard(card, imageFile);
+                } else if (remoteSelection) {
+                    imageUpdate = applyRemoteImageToCard(card, remoteSelection);
                 }
             } catch (error) {
                 state.flashcards = state.flashcards.filter((item) => item.id !== card.id);
@@ -648,6 +697,7 @@ async function onFlashcardSubmit(event) {
         }
 
         elements.flashcardForm.reset();
+        clearPendingFormRemoteImage("flashcard");
         renderAll();
     } catch (error) {
         console.error("Failed to save the flashcard.", error);
@@ -733,6 +783,7 @@ async function onCollectionFlashcardSubmit(event) {
     const german = elements.collectionFlashcardGerman.value.trim();
     const englishAnswers = parseEnglishAnswersInput(elements.collectionFlashcardEnglish.value);
     const imageFile = elements.collectionFlashcardImage.files[0];
+    const remoteSelection = pendingFormRemoteImages.collectionFlashcard;
 
     if (!german || englishAnswers.length === 0) {
         return;
@@ -748,6 +799,8 @@ async function onCollectionFlashcardSubmit(event) {
 
             if (imageFile) {
                 imageUpdate = await applyUploadedImageToCard(card, imageFile);
+            } else if (remoteSelection) {
+                imageUpdate = applyRemoteImageToCard(card, remoteSelection);
             }
 
             card.englishAnswers = merged;
@@ -776,6 +829,7 @@ async function onCollectionFlashcardSubmit(event) {
                 german,
                 englishAnswers,
                 imageData: "",
+                imageAttribution: null,
                 hasImage: false,
             };
             state.flashcards.push(card);
@@ -785,6 +839,8 @@ async function onCollectionFlashcardSubmit(event) {
             try {
                 if (imageFile) {
                     imageUpdate = await applyUploadedImageToCard(card, imageFile);
+                } else if (remoteSelection) {
+                    imageUpdate = applyRemoteImageToCard(card, remoteSelection);
                 }
             } catch (error) {
                 state.flashcards = state.flashcards.filter((item) => item.id !== card.id);
@@ -808,6 +864,7 @@ async function onCollectionFlashcardSubmit(event) {
         }
 
         elements.collectionFlashcardForm.reset();
+        clearPendingFormRemoteImage("collectionFlashcard");
         renderAll();
     } catch (error) {
         console.error("Failed to save the collection flashcard.", error);
@@ -815,6 +872,365 @@ async function onCollectionFlashcardSubmit(event) {
     }
 }
 
+function onFlashcardImageInputChange() {
+    if (elements.flashcardImage.files[0]) {
+        clearPendingFormRemoteImage("flashcard");
+    }
+}
+
+function onCollectionFlashcardImageInputChange() {
+    if (elements.collectionFlashcardImage.files[0]) {
+        clearPendingFormRemoteImage("collectionFlashcard");
+    }
+}
+
+function onFlashcardAutoImageClick() {
+    openImageSearchModal({
+        kind: "flashcard",
+        query: deriveImageSearchQuery({
+            englishAnswers: parseEnglishAnswersInput(elements.flashcardEnglish.value),
+            german: elements.flashcardGerman.value,
+            manualQuery: elements.flashcardImageQuery.value,
+        }),
+        title: "Find image for new flashcard",
+    });
+}
+
+function onCollectionFlashcardAutoImageClick() {
+    openImageSearchModal({
+        kind: "collectionFlashcard",
+        query: deriveImageSearchQuery({
+            englishAnswers: parseEnglishAnswersInput(elements.collectionFlashcardEnglish.value),
+            german: elements.collectionFlashcardGerman.value,
+            manualQuery: elements.collectionFlashcardImageQuery.value,
+        }),
+        title: "Find image for collection flashcard",
+    });
+}
+
+async function requestFlashcardAutoImage(cardId) {
+    const card = state.flashcards.find((item) => item.id === cardId);
+
+    if (!card) {
+        return;
+    }
+
+    openImageSearchModal({
+        kind: "existingCard",
+        cardId,
+        query: deriveImageSearchQuery({
+            englishAnswers: card.englishAnswers,
+            german: card.german,
+            manualQuery: card.imageAttribution?.searchQuery || "",
+        }),
+        title: `Find image for ${card.german}`,
+    });
+}
+
+async function onBulkFillAllMissingImages() {
+    await bulkFillMissingImagesForCards(
+        state.flashcards.filter((card) => !card.hasImage),
+        "all flashcards",
+    );
+}
+
+async function onBulkFillCollectionMissingImages() {
+    const collection = state.collections.find((item) => item.id === selectedCollectionId);
+
+    if (!collection) {
+        showAppStatusMessage("Select a collection first.", false);
+        return;
+    }
+
+    const cards = state.flashcards.filter(
+        (card) => collection.cardIds.includes(card.id) && !card.hasImage,
+    );
+    await bulkFillMissingImagesForCards(cards, `“${collection.name}”`);
+}
+
+async function bulkFillMissingImagesForCards(cards, label) {
+    if (bulkImageFillInProgress) {
+        return;
+    }
+
+    if (!Array.isArray(cards) || cards.length === 0) {
+        showAppStatusMessage(`No missing images found in ${label}.`, true);
+        return;
+    }
+
+    bulkImageFillInProgress = true;
+    setBulkImageButtonsDisabled(true);
+
+    let attachedCount = 0;
+    let skippedCount = 0;
+
+    try {
+        for (const card of cards) {
+            const query = deriveImageSearchQuery({
+                englishAnswers: card.englishAnswers,
+                german: card.german,
+            });
+
+            if (!query) {
+                skippedCount += 1;
+                continue;
+            }
+
+            try {
+                const results = await searchWikimediaCommonsImages(query, { limit: 1 });
+                const bestMatch = results[0];
+
+                if (!bestMatch) {
+                    skippedCount += 1;
+                    continue;
+                }
+
+                applyRemoteImageToCard(card, bestMatch);
+                attachedCount += 1;
+            } catch (error) {
+                console.warn(`Auto image search failed for ${card.german}.`, error);
+                skippedCount += 1;
+            }
+        }
+
+        const didPersist = attachedCount > 0 ? await persist() : true;
+
+        if (didPersist) {
+            showAppStatusMessage(
+                `Auto-filled ${attachedCount} image${attachedCount === 1 ? "" : "s"} in ${label}. Skipped ${skippedCount}.`,
+                true,
+            );
+        }
+
+        renderAll();
+    } finally {
+        bulkImageFillInProgress = false;
+        setBulkImageButtonsDisabled(false);
+    }
+}
+
+function setBulkImageButtonsDisabled(isDisabled) {
+    elements.flashcardBulkImageFill.disabled = isDisabled;
+    elements.collectionBulkImageFill.disabled = isDisabled;
+}
+
+function openImageSearchModal({ kind, cardId = "", query = "", title = "Find image" }) {
+    imageSearchModalContext = { kind, cardId };
+    elements.imageSearchModal.classList.remove("hidden");
+    document.body.classList.add("modal-open");
+    elements.imageSearchQuery.value = query || "";
+    elements.imageSearchResults.innerHTML = "";
+    elements.imageSearchStatus.textContent = query
+        ? "Search Wikimedia Commons and pick an image to attach by URL."
+        : "Enter a word or phrase and search Wikimedia Commons.";
+    const heading = document.getElementById("image-search-modal-title");
+    if (heading) {
+        heading.textContent = title;
+    }
+    window.setTimeout(() => {
+        elements.imageSearchQuery.focus();
+        elements.imageSearchQuery.select();
+    }, 0);
+}
+
+function closeImageSearchModal() {
+    if (imageSearchAbortController) {
+        imageSearchAbortController.abort();
+        imageSearchAbortController = null;
+    }
+
+    imageSearchModalContext = null;
+    elements.imageSearchModal.classList.add("hidden");
+    elements.imageSearchResults.innerHTML = "";
+    elements.imageSearchStatus.textContent = "";
+    document.body.classList.remove("modal-open");
+}
+
+function onImageSearchModalClick(event) {
+    if (event.target === elements.imageSearchModal) {
+        closeImageSearchModal();
+    }
+}
+
+function onImageSearchModalKeyDown(event) {
+    if (event.key === "Escape") {
+        closeImageSearchModal();
+    }
+}
+
+async function onImageSearchSubmit(event) {
+    event.preventDefault();
+
+    const query = elements.imageSearchQuery.value.trim();
+    if (!query) {
+        elements.imageSearchStatus.textContent = "Enter a search term first.";
+        return;
+    }
+
+    if (imageSearchAbortController) {
+        imageSearchAbortController.abort();
+    }
+
+    imageSearchAbortController = new AbortController();
+    elements.imageSearchSubmitButton.disabled = true;
+    elements.imageSearchResults.innerHTML = "";
+    elements.imageSearchStatus.textContent = `Searching Wikimedia Commons for “${query}”…`;
+
+    try {
+        const results = await searchWikimediaCommonsImages(query, {
+            limit: 8,
+            signal: imageSearchAbortController.signal,
+        });
+
+        if (results.length === 0) {
+            elements.imageSearchStatus.textContent = "No images found. Try a simpler noun like the first English meaning.";
+            return;
+        }
+
+        elements.imageSearchStatus.textContent = `Showing ${results.length} result${results.length === 1 ? "" : "s"} for “${query}”.`;
+        renderImageSearchResults(results);
+    } catch (error) {
+        if (error?.name === "AbortError") {
+            return;
+        }
+
+        console.error("Image search failed.", error);
+        elements.imageSearchStatus.textContent = error?.message || "Could not search for images right now.";
+    } finally {
+        elements.imageSearchSubmitButton.disabled = false;
+    }
+}
+
+function renderImageSearchResults(results) {
+    elements.imageSearchResults.innerHTML = "";
+
+    results.forEach((result) => {
+        const card = document.createElement("div");
+        card.className = "image-search-result-card";
+
+        const image = document.createElement("img");
+        image.src = result.imageUrl;
+        image.alt = result.title || result.searchQuery || "Image search result";
+        card.appendChild(image);
+
+        const title = document.createElement("h4");
+        title.textContent = result.title || result.searchQuery;
+        card.appendChild(title);
+
+        const meta = document.createElement("p");
+        meta.className = "muted";
+        meta.textContent = formatRemoteImageAttribution(result);
+        card.appendChild(meta);
+
+        const actions = document.createElement("div");
+        actions.className = "image-search-result-actions";
+
+        const useButton = document.createElement("button");
+        useButton.type = "button";
+        useButton.textContent = "Use this image";
+        useButton.addEventListener("click", () => {
+            void onImageSearchResultChosen(result);
+        });
+
+        const sourceLink = document.createElement("a");
+        sourceLink.className = "button secondary";
+        sourceLink.href = result.pageUrl;
+        sourceLink.target = "_blank";
+        sourceLink.rel = "noreferrer noopener";
+        sourceLink.textContent = "Open source";
+
+        actions.append(useButton, sourceLink);
+        card.appendChild(actions);
+        elements.imageSearchResults.appendChild(card);
+    });
+}
+
+async function onImageSearchResultChosen(result) {
+    const selection = buildRemoteImageAttribution(result);
+
+    if (!imageSearchModalContext || !selection) {
+        return;
+    }
+
+    if (imageSearchModalContext.kind === "flashcard") {
+        setPendingFormRemoteImage("flashcard", selection);
+        closeImageSearchModal();
+        return;
+    }
+
+    if (imageSearchModalContext.kind === "collectionFlashcard") {
+        setPendingFormRemoteImage("collectionFlashcard", selection);
+        closeImageSearchModal();
+        return;
+    }
+
+    if (imageSearchModalContext.kind === "existingCard") {
+        const card = state.flashcards.find((item) => item.id === imageSearchModalContext.cardId);
+
+        if (!card) {
+            closeImageSearchModal();
+            return;
+        }
+
+        applyRemoteImageToCard(card, selection);
+        const didPersist = await persist();
+
+        if (didPersist) {
+            showAppStatusMessage(`Attached a linked image to “${card.german}”.`, true);
+        }
+
+        closeImageSearchModal();
+        renderAll();
+    }
+}
+
+function setPendingFormRemoteImage(formKey, selection) {
+    pendingFormRemoteImages[formKey] = selection || null;
+
+    const isFlashcardForm = formKey === "flashcard";
+    const queryInput = isFlashcardForm
+        ? elements.flashcardImageQuery
+        : elements.collectionFlashcardImageQuery;
+
+    if (queryInput && selection?.searchQuery) {
+        queryInput.value = selection.searchQuery;
+    }
+
+    renderPendingFormRemoteImage(formKey);
+}
+
+function clearPendingFormRemoteImage(formKey) {
+    pendingFormRemoteImages[formKey] = null;
+    renderPendingFormRemoteImage(formKey);
+}
+
+function renderPendingFormRemoteImage(formKey) {
+    const selection = pendingFormRemoteImages[formKey];
+    const preview = formKey === "flashcard"
+        ? elements.flashcardAutoImagePreview
+        : elements.collectionFlashcardAutoImagePreview;
+    const clearButton = formKey === "flashcard"
+        ? elements.flashcardClearAutoImageButton
+        : elements.collectionFlashcardClearAutoImageButton;
+
+    if (!selection) {
+        preview.classList.add("hidden");
+        preview.innerHTML = "";
+        clearButton.classList.add("hidden");
+        return;
+    }
+
+    preview.innerHTML = `
+        <img src="${escapeHtml(selection.imageUrl || "")}" alt="${escapeHtml(selection.title || selection.searchQuery || "Selected image")}" />
+        <div class="selected-remote-image-meta">
+            <h4>${escapeHtml(selection.title || selection.searchQuery || "Selected image")}</h4>
+            <p class="muted">${escapeHtml(formatRemoteImageAttribution(selection) || "Wikimedia Commons")}</p>
+            <a href="${escapeHtml(selection.pageUrl || selection.fullImageUrl || selection.imageUrl || "#")}" target="_blank" rel="noreferrer noopener">Open source page</a>
+        </div>
+    `;
+    preview.classList.remove("hidden");
+    clearButton.classList.remove("hidden");
+}
 function onStudySetupSubmit(event) {
     event.preventDefault();
 
@@ -1275,6 +1691,7 @@ function convertBackupStateToImportedEntries(backupState) {
             german: card.german,
             englishAnswers: [...(card.englishAnswers || [])],
             imageData: card.imageData || "",
+            imageAttribution: card.imageAttribution || null,
             hasImage: Boolean(card.imageData),
         },
         collections: collectionRefsByCardId.get(card.id) || [],
@@ -1301,12 +1718,27 @@ async function applyImportedFlashcardEntries(entries, { logLabel = "Import" } = 
                 german: entry.card.german,
                 englishAnswers: [...(entry.card.englishAnswers || [])],
                 imageData: "",
+                imageAttribution: null,
                 hasImage: false,
             };
             state.flashcards.push(card);
 
             if (entry.card.imageData) {
-                await setFlashcardImage(card, entry.card.imageData);
+                if (isRemoteImageUrl(entry.card.imageData)) {
+                    applyRemoteImageToCard(card, {
+                        imageUrl: entry.card.imageData,
+                        fullImageUrl: entry.card.imageAttribution?.fullImageUrl || entry.card.imageData,
+                        pageUrl: entry.card.imageAttribution?.pageUrl || "",
+                        provider: entry.card.imageAttribution?.provider || "Wikimedia Commons",
+                        title: entry.card.imageAttribution?.title || card.german,
+                        creator: entry.card.imageAttribution?.creator || "",
+                        license: entry.card.imageAttribution?.license || "",
+                        licenseUrl: entry.card.imageAttribution?.licenseUrl || "",
+                        searchQuery: entry.card.imageAttribution?.searchQuery || "",
+                    });
+                } else {
+                    await setFlashcardImage(card, entry.card.imageData);
+                }
             }
 
             createdCardsCount += 1;
@@ -1318,7 +1750,21 @@ async function applyImportedFlashcardEntries(entries, { logLabel = "Import" } = 
             addedMeanings = mergeResult.added;
 
             if (entry.card.imageData) {
-                await setFlashcardImage(card, entry.card.imageData);
+                if (isRemoteImageUrl(entry.card.imageData)) {
+                    applyRemoteImageToCard(card, {
+                        imageUrl: entry.card.imageData,
+                        fullImageUrl: entry.card.imageAttribution?.fullImageUrl || entry.card.imageData,
+                        pageUrl: entry.card.imageAttribution?.pageUrl || "",
+                        provider: entry.card.imageAttribution?.provider || "Wikimedia Commons",
+                        title: entry.card.imageAttribution?.title || card.german,
+                        creator: entry.card.imageAttribution?.creator || "",
+                        license: entry.card.imageAttribution?.license || "",
+                        licenseUrl: entry.card.imageAttribution?.licenseUrl || "",
+                        searchQuery: entry.card.imageAttribution?.searchQuery || "",
+                    });
+                } else {
+                    await setFlashcardImage(card, entry.card.imageData);
+                }
                 adoptedImage = true;
             }
         }
@@ -2004,6 +2450,7 @@ async function setFlashcardImage(card, imageSource) {
     revokeFlashcardImageUrl(card.imageData);
 
     card.imageData = nextImageUrl;
+    card.imageAttribution = null;
     card.hasImage = true;
 }
 
@@ -2021,9 +2468,22 @@ async function applyUploadedImageToCard(card, imageFile) {
     };
 }
 
+function applyRemoteImageToCard(card, selection) {
+    const replacedExisting = Boolean(card.hasImage);
+    revokeFlashcardImageUrl(card.imageData);
+    card.imageData = String(selection?.imageUrl || selection?.fullImageUrl || "").trim();
+    card.imageAttribution = buildRemoteImageAttribution(selection);
+    card.hasImage = Boolean(card.imageData);
+
+    return {
+        replacedExisting,
+    };
+}
+
 function clearFlashcardImage(card) {
     revokeFlashcardImageUrl(card.imageData);
     card.imageData = "";
+    card.imageAttribution = null;
     card.hasImage = false;
 }
 
@@ -2031,6 +2491,10 @@ function revokeFlashcardImageUrl(imageUrl) {
     if (String(imageUrl || "").startsWith("blob:")) {
         URL.revokeObjectURL(imageUrl);
     }
+}
+
+function isRemoteImageUrl(value) {
+    return /^https?:\/\//i.test(String(value || ""));
 }
 
 async function prepareUploadedImageForStorage(file) {

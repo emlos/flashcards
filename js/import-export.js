@@ -63,6 +63,21 @@ function parseNonNegativeInteger(value) {
     return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
 }
 
+function parseImageAttributionField(value) {
+    const decoded = String(value || "").trim();
+
+    if (!decoded) {
+        return null;
+    }
+
+    try {
+        const parsed = JSON.parse(decoded);
+        return parsed && typeof parsed === "object" ? parsed : null;
+    } catch (error) {
+        return null;
+    }
+}
+
 function sanitizeStudyMode(value) {
     return ["de-en", "en-de", "image-de", "mc-de-en", "random"].includes(value)
         ? value
@@ -138,6 +153,7 @@ export function exportBackupText(state) {
                 encodeField(card.german),
                 encodeField(JSON.stringify(card.englishAnswers || [])),
                 encodeField(card.imageData || ""),
+                encodeField(JSON.stringify(card.imageAttribution || null)),
             ].join("\t"),
         );
     }
@@ -226,6 +242,9 @@ export function parseBackupText(text) {
                 german: decodeField(parts[2]),
                 englishAnswers: parseBackupEnglishAnswers(decodeField(parts[3])),
                 imageData: decodeField(parts[4]),
+                imageAttribution: parts[5]
+                    ? parseImageAttributionField(decodeField(parts[5]))
+                    : null,
             });
             return;
         }

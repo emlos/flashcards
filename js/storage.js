@@ -37,12 +37,59 @@ function normalizeEnglishAnswers(value) {
     return [...new Set(answers.map((item) => String(item || "").trim()).filter(Boolean))];
 }
 
+function sanitizeImageReference(value) {
+    const normalized = String(value || "").trim();
+
+    if (isInlineDataUrl(normalized) || isRemoteImageUrl(normalized)) {
+        return normalized;
+    }
+
+    return "";
+}
+
+function sanitizeImageAttribution(value) {
+    if (!value || typeof value !== "object") {
+        return null;
+    }
+
+    const provider = String(value.provider || "").trim();
+    const title = String(value.title || "").trim();
+    const creator = String(value.creator || "").trim();
+    const license = String(value.license || "").trim();
+    const licenseUrl = String(value.licenseUrl || "").trim();
+    const pageUrl = String(value.pageUrl || "").trim();
+    const imageUrl = sanitizeImageReference(value.imageUrl);
+    const fullImageUrl = sanitizeImageReference(value.fullImageUrl);
+    const searchQuery = String(value.searchQuery || "").trim();
+
+    if (!provider && !title && !creator && !license && !pageUrl && !imageUrl && !fullImageUrl) {
+        return null;
+    }
+
+    return {
+        provider,
+        title,
+        creator,
+        license,
+        licenseUrl,
+        pageUrl,
+        imageUrl,
+        fullImageUrl,
+        searchQuery,
+    };
+}
+
 function sanitizeFlashcard(card) {
+    const imageData = sanitizeImageReference(card?.imageData);
+    const imageAttribution = sanitizeImageAttribution(card?.imageAttribution);
+
     return {
         id: String(card?.id || crypto.randomUUID()),
         german: String(card?.german || "").trim(),
         englishAnswers: normalizeEnglishAnswers(card),
-        hasImage: Boolean(card?.hasImage || getInlineImageData(card)),
+        imageData,
+        imageAttribution,
+        hasImage: Boolean(card?.hasImage || getInlineImageData(card) || isRemoteImageUrl(imageData)),
     };
 }
 
@@ -356,9 +403,7 @@ function writeMetadataState(database, rawState) {
         const transaction = database.transaction([STATE_STORE_NAME, IMAGE_STORE_NAME], "readwrite");
         const stateStore = transaction.objectStore(STATE_STORE_NAME);
         const imageStore = transaction.objectStore(IMAGE_STORE_NAME);
-        const desiredImageIds = new Set(
-            safeState.flashcards.filter((card) => card.hasImage).map((card) => card.id),
-        );
+        const desiredImageIds = collectDesiredStoredImageIds(rawState, safeState, inlineImages);
 
         transaction.addEventListener("complete", () => resolve());
         transaction.addEventListener("abort", () => {
@@ -459,8 +504,11 @@ function attachStoredImagesToState(database, state) {
                     ...state,
                     flashcards: state.flashcards.map((card) => ({
                         ...card,
-                        hasImage: imageUrlsByCardId.has(card.id) || Boolean(card.hasImage),
-                        imageData: imageUrlsByCardId.get(card.id) || "",
+                        hasImage:
+                            imageUrlsByCardId.has(card.id) ||
+                            Boolean(card.hasImage) ||
+                            isRemoteImageUrl(card.imageData),
+                        imageData: imageUrlsByCardId.get(card.id) || sanitizeImageReference(card.imageData),
                     })),
                 });
             }
@@ -542,6 +590,25 @@ function readImageDataUrlsByCardId(database, cardIds) {
 
 function isBlobUrl(value) {
     return String(value || "").startsWith("blob:");
+}
+
+function isRemoteImageUrl(value) {
+    return /^https?:\/\//i.test(String(value || ""));
+}
+
+function collectDesiredStoredImageIds(rawState, safeState, inlineImages) {
+    const desiredIds = new Set(inlineImages.keys());
+    const rawFlashcards = Array.isArray(rawState?.flashcards) ? rawState.flashcards : [];
+
+    safeState.flashcards.forEach((card, index) => {
+        const rawCard = rawFlashcards[index];
+
+        if (isBlobUrl(rawCard?.imageData)) {
+            desiredIds.add(card.id);
+        }
+    });
+
+    return desiredIds;
 }
 
 function collectInlineImagesByCardId(rawState, safeState) {
