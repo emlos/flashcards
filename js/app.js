@@ -51,8 +51,9 @@ import { createFlashcardsUi } from "./flashcards-ui.js";
 import {
     buildRemoteImageAttribution,
     deriveImageSearchQuery,
+    findBestImageMatch,
     formatRemoteImageAttribution,
-    searchWikimediaCommonsImages,
+    searchImageProviders,
 } from "./image-search.js";
 import { createStudyUi } from "./study-ui.js";
 
@@ -78,6 +79,8 @@ const pendingFormRemoteImages = {
 };
 let imageSearchModalContext = null;
 let imageSearchAbortController = null;
+let imageSearchCurrentQuery = "";
+let imageSearchExpanded = false;
 let bulkImageFillInProgress = false;
 const selectedFlashcardIds = new Set();
 let persistQueue = Promise.resolve(false);
@@ -217,6 +220,7 @@ const elements = {
     imageSearchSubmitButton: document.getElementById("image-search-submit-button"),
     imageSearchStatus: document.getElementById("image-search-status"),
     imageSearchResults: document.getElementById("image-search-results"),
+    imageSearchLoadMoreButton: document.getElementById("image-search-load-more-button"),
     imageSearchCancelButton: document.getElementById("image-search-cancel-button"),
 };
 
@@ -438,6 +442,7 @@ function bindEvents() {
     elements.backupImportModal.addEventListener("click", onActionModalClick);
     elements.backupImportModal.addEventListener("keydown", onActionModalKeyDown);
     elements.imageSearchForm.addEventListener("submit", onImageSearchSubmit);
+    elements.imageSearchLoadMoreButton.addEventListener("click", onImageSearchLoadMore);
     elements.imageSearchCancelButton.addEventListener("click", closeImageSearchModal);
     elements.imageSearchModal.addEventListener("click", onImageSearchModalClick);
     elements.imageSearchModal.addEventListener("keydown", onImageSearchModalKeyDown);
@@ -977,8 +982,7 @@ async function bulkFillMissingImagesForCards(cards, label) {
             }
 
             try {
-                const results = await searchWikimediaCommonsImages(query, { limit: 1 });
-                const bestMatch = results[0];
+                const bestMatch = await findBestImageMatch(query);
 
                 if (!bestMatch) {
                     skippedCount += 1;
@@ -1016,13 +1020,17 @@ function setBulkImageButtonsDisabled(isDisabled) {
 
 function openImageSearchModal({ kind, cardId = "", query = "", title = "Find image" }) {
     imageSearchModalContext = { kind, cardId };
+    imageSearchCurrentQuery = normalizeWord(query || "").trim();
+    imageSearchExpanded = false;
     elements.imageSearchModal.classList.remove("hidden");
     document.body.classList.add("modal-open");
     elements.imageSearchQuery.value = query || "";
     elements.imageSearchResults.innerHTML = "";
+    elements.imageSearchLoadMoreButton.classList.add("hidden");
+    elements.imageSearchLoadMoreButton.disabled = false;
     elements.imageSearchStatus.textContent = query
-        ? "Search Wikimedia Commons and pick an image to attach by URL."
-        : "Enter a word or phrase and search Wikimedia Commons.";
+        ? "Search multiple open image libraries and pick the best match."
+        : "Enter a word or phrase and search multiple open image libraries.";
     const heading = document.getElementById("image-search-modal-title");
     if (heading) {
         heading.textContent = title;
@@ -1040,9 +1048,12 @@ function closeImageSearchModal() {
     }
 
     imageSearchModalContext = null;
+    imageSearchCurrentQuery = "";
+    imageSearchExpanded = false;
     elements.imageSearchModal.classList.add("hidden");
     elements.imageSearchResults.innerHTML = "";
     elements.imageSearchStatus.textContent = "";
+    elements.imageSearchLoadMoreButton.classList.add("hidden");
     document.body.classList.remove("modal-open");
 }
 
@@ -1067,28 +1078,65 @@ async function onImageSearchSubmit(event) {
         return;
     }
 
+    await runImageSearch(query, { expanded: false });
+}
+
+async function onImageSearchLoadMore() {
+    const query = elements.imageSearchQuery.value.trim() || imageSearchCurrentQuery;
+    if (!query) {
+        elements.imageSearchStatus.textContent = "Enter a search term first.";
+        return;
+    }
+
+    await runImageSearch(query, { expanded: true });
+}
+
+async function runImageSearch(query, { expanded }) {
     if (imageSearchAbortController) {
         imageSearchAbortController.abort();
     }
 
     imageSearchAbortController = new AbortController();
+    imageSearchCurrentQuery = query;
+    imageSearchExpanded = Boolean(expanded);
     elements.imageSearchSubmitButton.disabled = true;
-    elements.imageSearchResults.innerHTML = "";
-    elements.imageSearchStatus.textContent = `Searching Wikimedia Commons for “${query}”…`;
+    elements.imageSearchLoadMoreButton.disabled = true;
+
+    if (!expanded) {
+        elements.imageSearchResults.innerHTML = "";
+        elements.imageSearchLoadMoreButton.classList.add("hidden");
+    }
+
+    elements.imageSearchStatus.textContent = expanded
+        ? `Loading more results for “${query}”…`
+        : `Searching open image libraries for “${query}”…`;
 
     try {
-        const results = await searchWikimediaCommonsImages(query, {
-            limit: 8,
+        const searchResults = await searchImageProviders(query, {
+            expanded,
             signal: imageSearchAbortController.signal,
         });
 
-        if (results.length === 0) {
+        if (searchResults.visibleSections.length === 0) {
             elements.imageSearchStatus.textContent = "No images found. Try a simpler noun like the first English meaning.";
+            elements.imageSearchResults.innerHTML = "";
+            elements.imageSearchLoadMoreButton.classList.add("hidden");
             return;
         }
 
-        elements.imageSearchStatus.textContent = `Showing ${results.length} result${results.length === 1 ? "" : "s"} for “${query}”.`;
-        renderImageSearchResults(results);
+        renderImageSearchResults(searchResults.visibleSections);
+
+        const sourceCount = searchResults.visibleSections.length;
+        const sourceLabel = `${sourceCount} source${sourceCount === 1 ? "" : "s"}`;
+        const perSourceLabel = expanded ? "up to 10 per source" : "up to 2 per source";
+        elements.imageSearchStatus.textContent = `Showing ${searchResults.totalResults} result${searchResults.totalResults === 1 ? "" : "s"} across ${sourceLabel} for “${query}” (${perSourceLabel}).`;
+
+        if (!expanded && searchResults.canLoadMore) {
+            elements.imageSearchLoadMoreButton.classList.remove("hidden");
+            elements.imageSearchLoadMoreButton.disabled = false;
+        } else {
+            elements.imageSearchLoadMoreButton.classList.add("hidden");
+        }
     } catch (error) {
         if (error?.name === "AbortError") {
             return;
@@ -1096,52 +1144,95 @@ async function onImageSearchSubmit(event) {
 
         console.error("Image search failed.", error);
         elements.imageSearchStatus.textContent = error?.message || "Could not search for images right now.";
+        elements.imageSearchLoadMoreButton.classList.add("hidden");
     } finally {
         elements.imageSearchSubmitButton.disabled = false;
+        if (!elements.imageSearchLoadMoreButton.classList.contains("hidden")) {
+            elements.imageSearchLoadMoreButton.disabled = false;
+        }
     }
 }
 
-function renderImageSearchResults(results) {
+function renderImageSearchResults(providerSections) {
     elements.imageSearchResults.innerHTML = "";
 
-    results.forEach((result) => {
-        const card = document.createElement("div");
-        card.className = "image-search-result-card";
+    providerSections.forEach((section) => {
+        const sectionElement = document.createElement("section");
+        sectionElement.className = "image-search-provider-section";
 
-        const image = document.createElement("img");
-        image.src = result.imageUrl;
-        image.alt = result.title || result.searchQuery || "Image search result";
-        card.appendChild(image);
+        const header = document.createElement("div");
+        header.className = "image-search-provider-header";
 
-        const title = document.createElement("h4");
-        title.textContent = result.title || result.searchQuery;
-        card.appendChild(title);
+        const heading = document.createElement("h4");
+        heading.textContent = section.label;
+        header.appendChild(heading);
 
-        const meta = document.createElement("p");
-        meta.className = "muted";
-        meta.textContent = formatRemoteImageAttribution(result);
-        card.appendChild(meta);
+        const count = document.createElement("span");
+        count.className = "muted";
+        count.textContent = `${section.results.length} shown`;
+        header.appendChild(count);
+        sectionElement.appendChild(header);
 
-        const actions = document.createElement("div");
-        actions.className = "image-search-result-actions";
+        const grid = document.createElement("div");
+        grid.className = "image-search-provider-grid";
 
-        const useButton = document.createElement("button");
-        useButton.type = "button";
-        useButton.textContent = "Use this image";
-        useButton.addEventListener("click", () => {
-            void onImageSearchResultChosen(result);
+        section.results.forEach((result) => {
+            const card = document.createElement("div");
+            card.className = "image-search-result-card";
+
+            const image = document.createElement("img");
+            image.src = result.imageUrl;
+            image.alt = result.title || result.searchQuery || "Image search result";
+            card.appendChild(image);
+
+            const providerTag = document.createElement("span");
+            providerTag.className = "image-search-provider-pill";
+            providerTag.textContent = result.provider || section.label;
+            card.appendChild(providerTag);
+
+            const title = document.createElement("h4");
+            title.textContent = result.title || result.searchQuery;
+            card.appendChild(title);
+
+            const meta = document.createElement("p");
+            meta.className = "muted";
+            meta.textContent = formatRemoteImageAttribution(result);
+            card.appendChild(meta);
+
+            if (result.externalOnly) {
+                const note = document.createElement("p");
+                note.className = "muted";
+                note.textContent = "Opens the provider website in a new tab.";
+                card.appendChild(note);
+            }
+
+            const actions = document.createElement("div");
+            actions.className = "image-search-result-actions";
+
+            if (!result.externalOnly) {
+                const useButton = document.createElement("button");
+                useButton.type = "button";
+                useButton.textContent = "Use this image";
+                useButton.addEventListener("click", () => {
+                    void onImageSearchResultChosen(result);
+                });
+                actions.appendChild(useButton);
+            }
+
+            const sourceLink = document.createElement("a");
+            sourceLink.className = result.externalOnly ? "button" : "button secondary";
+            sourceLink.href = result.pageUrl || result.fullImageUrl || result.imageUrl || "#";
+            sourceLink.target = "_blank";
+            sourceLink.rel = "noreferrer noopener";
+            sourceLink.textContent = result.externalOnly ? "Open website" : "Open source";
+            actions.appendChild(sourceLink);
+
+            card.appendChild(actions);
+            grid.appendChild(card);
         });
 
-        const sourceLink = document.createElement("a");
-        sourceLink.className = "button secondary";
-        sourceLink.href = result.pageUrl;
-        sourceLink.target = "_blank";
-        sourceLink.rel = "noreferrer noopener";
-        sourceLink.textContent = "Open source";
-
-        actions.append(useButton, sourceLink);
-        card.appendChild(actions);
-        elements.imageSearchResults.appendChild(card);
+        sectionElement.appendChild(grid);
+        elements.imageSearchResults.appendChild(sectionElement);
     });
 }
 
@@ -1224,7 +1315,7 @@ function renderPendingFormRemoteImage(formKey) {
         <img src="${escapeHtml(selection.imageUrl || "")}" alt="${escapeHtml(selection.title || selection.searchQuery || "Selected image")}" />
         <div class="selected-remote-image-meta">
             <h4>${escapeHtml(selection.title || selection.searchQuery || "Selected image")}</h4>
-            <p class="muted">${escapeHtml(formatRemoteImageAttribution(selection) || "Wikimedia Commons")}</p>
+            <p class="muted">${escapeHtml(formatRemoteImageAttribution(selection) || "Image source")}</p>
             <a href="${escapeHtml(selection.pageUrl || selection.fullImageUrl || selection.imageUrl || "#")}" target="_blank" rel="noreferrer noopener">Open source page</a>
         </div>
     `;
@@ -1729,7 +1820,7 @@ async function applyImportedFlashcardEntries(entries, { logLabel = "Import" } = 
                         imageUrl: entry.card.imageData,
                         fullImageUrl: entry.card.imageAttribution?.fullImageUrl || entry.card.imageData,
                         pageUrl: entry.card.imageAttribution?.pageUrl || "",
-                        provider: entry.card.imageAttribution?.provider || "Wikimedia Commons",
+                        provider: entry.card.imageAttribution?.provider || "Image source",
                         title: entry.card.imageAttribution?.title || card.german,
                         creator: entry.card.imageAttribution?.creator || "",
                         license: entry.card.imageAttribution?.license || "",
@@ -1755,7 +1846,7 @@ async function applyImportedFlashcardEntries(entries, { logLabel = "Import" } = 
                         imageUrl: entry.card.imageData,
                         fullImageUrl: entry.card.imageAttribution?.fullImageUrl || entry.card.imageData,
                         pageUrl: entry.card.imageAttribution?.pageUrl || "",
-                        provider: entry.card.imageAttribution?.provider || "Wikimedia Commons",
+                        provider: entry.card.imageAttribution?.provider || "Image source",
                         title: entry.card.imageAttribution?.title || card.german,
                         creator: entry.card.imageAttribution?.creator || "",
                         license: entry.card.imageAttribution?.license || "",

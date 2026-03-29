@@ -51,7 +51,7 @@
               <input type="file" id="flashcard-image" accept="image/*" />
             </label>
             <div class="image-assist-block">
-              <p class="muted image-assist-help">Or search Wikimedia Commons and attach an image by URL.</p>
+              <p class="muted image-assist-help">Or search multiple open image libraries and attach an image by URL.</p>
               <div class="toolbar toolbar-wrap image-assist-toolbar">
                 <input type="search" id="flashcard-image-query" placeholder="Search term (defaults to first English meaning)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
                 <button type="button" id="flashcard-auto-image-button" class="secondary">Auto-find image</button>
@@ -168,7 +168,7 @@
                       <input type="file" id="collection-flashcard-image" accept="image/*" />
                     </label>
                     <div class="image-assist-block">
-                      <p class="muted image-assist-help">Or search Wikimedia Commons and attach an image by URL.</p>
+                      <p class="muted image-assist-help">Or search multiple open image libraries and attach an image by URL.</p>
                       <div class="toolbar toolbar-wrap image-assist-toolbar">
                         <input type="search" id="collection-flashcard-image-query" placeholder="Search term (defaults to first English meaning)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
                         <button type="button" id="collection-flashcard-auto-image-button" class="secondary">Auto-find image</button>
@@ -418,13 +418,14 @@ COLLECTION\tcollection-id\tencodedName\tcardId1,cardId2,cardId3\tencodedColor</p
         <button id="image-search-cancel-button" type="button" class="secondary modal-close-button"
           aria-label="Close image search">Cancel</button>
       </div>
-      <p id="image-search-modal-description" class="muted">Search Wikimedia Commons and attach an image by URL.</p>
+      <p id="image-search-modal-description" class="muted">Search Wikimedia Commons, Openverse, Open Doodles, unDraw, Storyset, OpenMoji, and more, then attach an image by URL.</p>
       <form id="image-search-form" class="inline-form image-search-form" autocomplete="off">
         <input id="image-search-query" type="search" placeholder="dog" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" required />
         <button id="image-search-submit-button" type="submit">Search</button>
       </form>
       <p id="image-search-status" class="muted"></p>
       <div id="image-search-results" class="image-search-results"></div>
+      <button id="image-search-load-more-button" type="button" class="secondary hidden image-search-load-more-button">Load more results</button>
     </div>
   </div>
 
